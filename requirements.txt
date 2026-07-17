@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pydantic
+psycopg[binary,pool]
+openai
+python-dotenv
+certifi
+structlog
