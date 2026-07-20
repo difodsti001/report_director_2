@@ -2,7 +2,6 @@
 app.py
 
 Endpoints del asistente de reporte institucional para el directivo.
-Toda la lógica vive en core.py; este archivo solo define el contrato HTTP.
 """
 
 import sys
@@ -76,11 +75,7 @@ async def generar_reporte_endpoint(payload: ReporteRequest, courseid: int, cmid:
     """
     Pipeline completo: resuelve IE, verifica caché con invalidación por
     n_docentes_evaluados, genera con LLM si hace falta, guarda y registra
-    la asociación directivo-reporte. Puede tardar varios segundos si
-    dispara la generación.
-
-    courseid y cmid llegan como query params desde la URL de Moodle
-    (?courseid=123&cmid=456), el aula/módulo del directivo. Solo trazabilidad.
+    la asociación directivo-reporte.
     """
     try:
         return await core.obtener_o_generar_reporte(payload.userid, courseid, cmid)
@@ -91,7 +86,7 @@ async def generar_reporte_endpoint(payload: ReporteRequest, courseid: int, cmid:
 
     except core.SinDatosDisponiblesError:
         log.warning("endpoint_generar_sin_datos", userid=payload.userid, courseid=courseid)
-        raise HTTPException(404, "No hay evidencias de Sesión V1 registradas todavía para esta IE")
+        raise HTTPException(404, "No hay evidencias de Sesión registradas todavía para esta IE")
 
     except Exception:
         log.error(
