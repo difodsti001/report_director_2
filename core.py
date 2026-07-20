@@ -10,19 +10,51 @@ Dos bases de datos, dos pools separados:
 
 from __future__ import annotations
 
+import logging
 import os
+import sys
 import time
 from datetime import datetime
 from typing import Optional
 
+import structlog
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from llm_client import generar_texto_narrativo
-from logging_config import get_logger
 
-log = get_logger(__name__)
+
+# =============================================================================
+# Logging estructurado
+# =============================================================================
+
+def configurar_logging(nivel: str = "INFO") -> None:
+    """Llamar UNA VEZ al arrancar la aplicación, antes de loguear nada."""
+    logging.basicConfig(
+        format="%(message)s",
+        stream=sys.stdout,
+        level=getattr(logging, nivel.upper(), logging.INFO),
+    )
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(
+            getattr(logging, nivel.upper(), logging.INFO)
+        ),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+        cache_logger_on_first_use=True,
+    )
+
+
+log = structlog.get_logger(__name__)
 
 
 # =============================================================================
@@ -93,7 +125,7 @@ async def cerrar_pools() -> None:
 
 
 async def _asegurar_schema_cache() -> None:
-    """Crea las tablas de caché si no existen. Idempotente."""
+    """Crea las tablas de caché si no existen."""
     ddl = """
         CREATE TABLE IF NOT EXISTS reportes_directivo (
             id SERIAL PRIMARY KEY,
@@ -419,8 +451,6 @@ async def redactar_texto_reporte(variables: dict) -> str:
 # =============================================================================
 
 async def generar_reporte(cod_modular: str, nombre_ie: str) -> dict:
-    """Corre el pipeline completo (niveles 1 y 2 + LLM) y arma el objeto
-    de reporte final."""
     filas = await obtener_filas_vista(cod_modular)
     if not filas:
         raise SinDatosDisponiblesError(f"Sin datos en la vista para {cod_modular}")

@@ -17,14 +17,14 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
 
+import structlog
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 import core
-from logging_config import configurar_logging, get_logger
 
-configurar_logging(nivel=os.environ.get("LOG_LEVEL", "INFO"))
-log = get_logger(__name__)
+core.configurar_logging(nivel=os.environ.get("LOG_LEVEL", "INFO"))
+log = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
