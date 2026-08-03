@@ -5,7 +5,7 @@ Lógica de negocio del asistente de reporte institucional.
 
 Dos bases de datos, dos pools separados:
 - pool_datos:  base con public."base_ebr_IA" y public.vw_processing_brechas_ebr
-- pool_cache:  base con reportes_directivo y consultas_directivo
+- pool_cache:  base con f4_reportes_directivo y f4_consultas_directivo
 """
 
 from __future__ import annotations
@@ -81,6 +81,12 @@ class ReporteNoExisteError(Exception):
     por el endpoint de solo-consulta."""
 
 
+class MuestraInsuficienteError(Exception):
+    """Aún no hay UMBRAL_MUESTRA_INSUFICIENTE docentes evaluados. No se
+    genera el reporte para no gastar una llamada al LLM sin necesidad --
+    ver GET /reporte/consultar, que evalúa esto antes de sugerir generar."""
+
+
 # =============================================================================
 # Configuración de conexión
 # =============================================================================
@@ -127,29 +133,33 @@ async def cerrar_pools() -> None:
 async def _asegurar_schema_cache() -> None:
     """Crea las tablas de caché si no existen."""
     ddl = """
-        CREATE TABLE IF NOT EXISTS reportes_directivo (
+        CREATE TABLE IF NOT EXISTS f4_reportes_directivo (
             id SERIAL PRIMARY KEY,
             cod_modular VARCHAR NOT NULL UNIQUE,
+            estado VARCHAR NOT NULL DEFAULT 'generado',
             n_docentes_evaluados INTEGER NOT NULL,
-            reporte_json JSONB NOT NULL,
+            reporte_json JSONB,
             fecha_generacion TIMESTAMP NOT NULL DEFAULT now(),
-            fecha_actualizacion TIMESTAMP NOT NULL DEFAULT now()
+            fecha_actualizacion TIMESTAMP NOT NULL DEFAULT now(),
+            CONSTRAINT chk_estado CHECK (estado IN ('generado', 'muestra_insuficiente', 'sin_datos')),
+            CONSTRAINT chk_reporte_json_si_generado
+                CHECK (estado <> 'generado' OR reporte_json IS NOT NULL)
         );
 
-        CREATE TABLE IF NOT EXISTS consultas_directivo (
+        CREATE TABLE IF NOT EXISTS f4_consultas_directivo (
             id SERIAL PRIMARY KEY,
             cod_modular VARCHAR NOT NULL,
             userid_directivo INTEGER NOT NULL,
             courseid INTEGER NOT NULL,
             cmid INTEGER NOT NULL,
-            id_reporte_directivo INTEGER NOT NULL REFERENCES reportes_directivo(id),
+            id_reporte_directivo INTEGER NOT NULL REFERENCES f4_reportes_directivo(id),
             fecha_consulta TIMESTAMP NOT NULL DEFAULT now(),
             CONSTRAINT uq_cod_modular_userid UNIQUE (cod_modular, userid_directivo)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_consultas_cod_modular ON consultas_directivo (cod_modular);
-        CREATE INDEX IF NOT EXISTS idx_consultas_userid ON consultas_directivo (userid_directivo);
-        CREATE INDEX IF NOT EXISTS idx_consultas_reporte ON consultas_directivo (id_reporte_directivo);
+        CREATE INDEX IF NOT EXISTS idx_consultas_cod_modular ON f4_consultas_directivo (cod_modular);
+        CREATE INDEX IF NOT EXISTS idx_consultas_userid ON f4_consultas_directivo (userid_directivo);
+        CREATE INDEX IF NOT EXISTS idx_consultas_reporte ON f4_consultas_directivo (id_reporte_directivo);
     """
     async with pool_cache.connection() as conn:
         await conn.execute(ddl)
@@ -160,7 +170,13 @@ async def _asegurar_schema_cache() -> None:
 # Configuración de negocio
 # =============================================================================
 CAMPO_FILTRO_IE = "cod_modular"
-CARGOS_DOCENTE = ("docente", "jerarquico")
+# Cargos que cuentan como "docente" en base_ebr_IA para pct_cobertura.
+# La comparación en SQL se hace con UPPER() en ambos lados (ver
+# contar_docentes_total) para no depender del casing exacto que traiga
+# la columna real -- se confirmó que viene en mayúsculas ("DOCENTE",
+# "DIRECTIVO", "JERARQUICO" o similar), pero no asumimos que siempre
+# será consistente.
+CARGOS_DOCENTE = ("DOCENTE", "JERARQUICO")
 
 # Prioridad de las brechas (crítica>estructural>de ajuste) y de niveles (inicio>en_proceso)
 PRIORIDAD_TIPO = {"Crítica": 3, "Estructural": 2, "De ajuste": 1}
@@ -175,12 +191,30 @@ UMBRAL_MUESTRA_INSUFICIENTE = 5
 
 # Cursos y cmids de docentes
 CMIDS_DOCENTES_POR_CURSO: dict[int, list[int] | None] = {
-    2800: [204186, 204187, 204188, 204202, 204192],
-    2920: None, 2927: None, 2932: None, 2935: None, 2938: None,
-    2941: None, 2944: None, 2947: None, 2950: None, 2953: None,
-    2956: None, 2959: None, 2962: None, 2965: None, 2968: None,
-    2971: None, 2974: None, 2977: None, 2980: None, 2983: None,
-    2986: None, 2989: None, 2992: None, 2995: None,
+    2918: [206189],
+    2926: [207613],
+    2931: [207631],
+    2934: [207649],
+    2937: [207667],
+    2940: [207685],
+    2943: [207703],
+    2946: [207721],
+    2949: [207739],
+    2952: [207757],
+    2955: [207775],
+    2958: [207793],
+    2961: [207811],
+    2964: [207829],
+    2967: [207847],
+    2970: [207865],
+    2973: [207883],
+    2976: [207901],
+    2979: [207919],
+    2982: [207937],
+    2985: [207955],
+    2988: [207973],
+    2991: [207991],
+    2994: [208010],
 }
 
 
@@ -219,11 +253,14 @@ async def resolver_cod_modular(userid: int) -> dict:
 
 
 async def contar_docentes_total(cod_modular: str) -> int:
+    """Cuenta docentes+jerárquicos en base_ebr_IA para esta IE. UPPER()
+    en ambos lados de la comparación de cargo: la columna real trae
+    valores en mayúsculas, pero no dependemos de un casing exacto."""
     query = f"""
         SELECT COUNT(*) AS total
         FROM public."base_ebr_IA"
         WHERE {CAMPO_FILTRO_IE} = %(valor_filtro)s
-          AND cargo = ANY(%(cargos)s)
+          AND UPPER(cargo) = ANY(%(cargos)s)
     """
     async with pool_datos.connection() as conn:
         row = await (await conn.execute(
@@ -258,6 +295,33 @@ async def obtener_filas_vista(cod_modular: str) -> list[dict]:
 
     log.info("filas_vista_obtenidas", cod_modular=cod_modular, n_filas=len(rows))
     return rows
+
+
+async def contar_docentes_evaluados(cod_modular: str) -> int:
+    """
+    Cuenta cuántos docentes DISTINTOS tienen al menos una evidencia
+    'success' para esta IE, sin traer las filas completas. Más liviana
+    que obtener_filas_vista + agrupar_por_docente -- usada por el
+    endpoint de consulta (que debe ser rápido) para decidir la acción
+    sin pagar el costo de traer todo el detalle por criterio.
+    """
+    cmids_validos = _cmids_docentes_configurados()
+    if not cmids_validos:
+        return 0
+
+    query = """
+        SELECT COUNT(DISTINCT user_id) AS total
+        FROM public.vw_processing_brechas_ebr
+        WHERE cod_modular = %(cod_modular)s
+          AND cmid = ANY(%(cmids_validos)s)
+          AND status = 'success'
+    """
+    async with pool_datos.connection() as conn:
+        row = await (await conn.execute(
+            query, {"cod_modular": cod_modular, "cmids_validos": cmids_validos}
+        )).fetchone()
+
+    return row["total"] if row else 0
 
 
 # =============================================================================
@@ -457,7 +521,17 @@ async def generar_reporte(cod_modular: str, nombre_ie: str) -> dict:
 
     filas_por_docente = agrupar_por_docente(filas)
     n_docentes_evaluados = len(filas_por_docente)
-    muestra_insuficiente = n_docentes_evaluados < UMBRAL_MUESTRA_INSUFICIENTE
+
+    if n_docentes_evaluados < UMBRAL_MUESTRA_INSUFICIENTE:
+        log.info(
+            "generacion_bloqueada_muestra_insuficiente",
+            cod_modular=cod_modular,
+            n_docentes_evaluados=n_docentes_evaluados,
+        )
+        raise MuestraInsuficienteError(
+            f"{cod_modular} tiene {n_docentes_evaluados} docentes evaluados, "
+            f"mínimo requerido {UMBRAL_MUESTRA_INSUFICIENTE}"
+        )
 
     n_docentes_total = await contar_docentes_total(cod_modular)
     pct_cobertura = (
@@ -481,7 +555,8 @@ async def generar_reporte(cod_modular: str, nombre_ie: str) -> dict:
         "n_docentes_total": n_docentes_total,
         "n_docentes_evaluados": n_docentes_evaluados,
         "pct_cobertura": pct_cobertura,
-        "muestra_insuficiente": muestra_insuficiente,
+        "muestra_insuficiente": False,  # siempre False aquí: generar_reporte
+        # ya bloqueó arriba si n_docentes_evaluados < UMBRAL_MUESTRA_INSUFICIENTE
         "distribucion_por_criterio": distribucion,
         "fortalezas_predominantes": fortalezas,
         "oportunidades_comunes": oportunidades,
@@ -496,40 +571,51 @@ async def generar_reporte(cod_modular: str, nombre_ie: str) -> dict:
 # =============================================================================
 
 async def obtener_reporte_guardado(cod_modular: str) -> Optional[dict]:
+    """Trae la fila de f4_reportes_directivo para esta IE, sin importar el
+    estado (generado, muestra_insuficiente, sin_datos) -- o None si esta
+    IE nunca tuvo ni un intento de generación."""
     query = """
-        SELECT id, cod_modular, n_docentes_evaluados, reporte_json,
+        SELECT id, cod_modular, estado, n_docentes_evaluados, reporte_json,
                fecha_generacion, fecha_actualizacion
-        FROM reportes_directivo
+        FROM f4_reportes_directivo
         WHERE cod_modular = %(cod_modular)s
     """
     async with pool_cache.connection() as conn:
         return await (await conn.execute(query, {"cod_modular": cod_modular})).fetchone()
 
 
-async def guardar_reporte(
-    cod_modular: str, n_docentes_evaluados: int, reporte_json: dict, es_actualizacion: bool
+async def guardar_estado_reporte(
+    cod_modular: str,
+    estado: str,
+    n_docentes_evaluados: int,
+    reporte_json: Optional[dict] = None,
 ) -> int:
-    """Inserta o actualiza el reporte de una IE. Retorna el id de la fila."""
-    if es_actualizacion:
-        query = """
-            UPDATE reportes_directivo
-            SET n_docentes_evaluados = %(n)s,
-                reporte_json = %(reporte)s,
-                fecha_actualizacion = now()
-            WHERE cod_modular = %(cod_modular)s
-            RETURNING id
-        """
-    else:
-        query = """
-            INSERT INTO reportes_directivo (cod_modular, n_docentes_evaluados, reporte_json)
-            VALUES (%(cod_modular)s, %(n)s, %(reporte)s)
-            RETURNING id
-        """
+    """
+    Upsert de la fila de f4_reportes_directivo para esta IE. estado es uno
+    de 'generado', 'muestra_insuficiente', 'sin_datos'. reporte_json
+    solo se pasa (y solo debe pasarse) cuando estado='generado'.
+
+    Como hay una sola fila por cod_modular, esto cubre tanto el primer
+    intento (exitoso o no) como los siguientes -- INSERT si es la
+    primera vez que se toca esta IE, UPDATE si ya existía una fila
+    (sin importar cuál era su estado anterior).
+    """
+    query = """
+        INSERT INTO f4_reportes_directivo (cod_modular, estado, n_docentes_evaluados, reporte_json)
+        VALUES (%(cod_modular)s, %(estado)s, %(n)s, %(reporte)s)
+        ON CONFLICT (cod_modular) DO UPDATE SET
+            estado = EXCLUDED.estado,
+            n_docentes_evaluados = EXCLUDED.n_docentes_evaluados,
+            reporte_json = COALESCE(EXCLUDED.reporte_json, f4_reportes_directivo.reporte_json),
+            fecha_actualizacion = now()
+        RETURNING id
+    """
     async with pool_cache.connection() as conn:
         row = await (await conn.execute(query, {
             "cod_modular": cod_modular,
+            "estado": estado,
             "n": n_docentes_evaluados,
-            "reporte": Jsonb(reporte_json),
+            "reporte": Jsonb(reporte_json) if reporte_json is not None else None,
         })).fetchone()
         await conn.commit()
 
@@ -542,7 +628,7 @@ async def registrar_consulta(
     """Asocia un directivo con el reporte de su IE. Un registro único por
     (cod_modular, userid_directivo)"""
     query = """
-        INSERT INTO consultas_directivo
+        INSERT INTO f4_consultas_directivo
             (cod_modular, userid_directivo, courseid, cmid, id_reporte_directivo)
         VALUES (%(cod_modular)s, %(userid)s, %(courseid)s, %(cmid)s, %(id_reporte)s)
         ON CONFLICT (cod_modular, userid_directivo) DO NOTHING
@@ -564,33 +650,83 @@ async def registrar_consulta(
 
 async def consultar_reporte_existente(userid: int) -> dict:
     """
-    GET /reporte/consultar
+    GET /reporte/consultar -- endpoint rápido de solo lectura, que además
+    decide qué debe hacer el frontend a continuación, sin generar nada
+    él mismo (nunca toca el LLM). Cuatro situaciones:
+
+      1. No hay reporte, y ya hay >= UMBRAL_MUESTRA_INSUFICIENTE docentes
+         evaluados -> accion="generar" (el frontend llama a
+         POST /reporte/generar automáticamente, sin botón visible).
+      2. Hay reporte, y el número de docentes evaluados no cambió desde
+         que se generó -> accion="mostrar", reporte vigente tal cual.
+      3. Hay reporte, pero el número de docentes evaluados cambió ->
+         accion="generar" (el frontend dispara la regeneración).
+      4. No hay reporte, y aún no se llega al mínimo de docentes ->
+         accion="esperar_docentes". NO se debe llamar a generar en este
+         caso -- generar produciría igual un reporte con
+         muestra_insuficiente=true, gastando una llamada al LLM sin
+         necesidad. El frontend muestra un estado de espera.
+
+    Retorna siempre {"accion": ..., "reporte": ... | None, "n_docentes_evaluados": ...}
     """
     inicio = time.monotonic()
     log.info("reporte_consultado", userid=userid)
 
     ie = await resolver_cod_modular(userid)
     cod_modular = ie["cod_modular"]
+
     guardado = await obtener_reporte_guardado(cod_modular)
+    n_actual = await contar_docentes_evaluados(cod_modular)
 
     duracion_ms = round((time.monotonic() - inicio) * 1000)
 
     if guardado is None:
-        log.info("reporte_consultado_no_existe", cod_modular=cod_modular, duracion_ms=duracion_ms)
-        raise ReporteNoExisteError(f"No hay reporte generado todavía para {cod_modular}")
+        if n_actual < UMBRAL_MUESTRA_INSUFICIENTE:
+            log.info(
+                "consulta_esperar_docentes",
+                cod_modular=cod_modular,
+                n_docentes_evaluados=n_actual,
+                duracion_ms=duracion_ms,
+            )
+            return {"accion": "esperar_docentes", "reporte": None, "n_docentes_evaluados": n_actual}
 
-    log.info("reporte_consultado_encontrado", cod_modular=cod_modular, duracion_ms=duracion_ms)
-    return guardado["reporte_json"]
+        log.info(
+            "consulta_debe_generar",
+            cod_modular=cod_modular,
+            motivo="sin_registro_previo",
+            n_docentes_evaluados=n_actual,
+            duracion_ms=duracion_ms,
+        )
+        return {"accion": "generar", "reporte": None, "n_docentes_evaluados": n_actual}
+
+    if n_actual != guardado["n_docentes_evaluados"]:
+        log.info(
+            "consulta_debe_generar",
+            cod_modular=cod_modular,
+            motivo="nueva_actividad_docente",
+            n_docentes_guardado=guardado["n_docentes_evaluados"],
+            n_docentes_evaluados=n_actual,
+            duracion_ms=duracion_ms,
+        )
+        return {"accion": "generar", "reporte": None, "n_docentes_evaluados": n_actual}
+
+    log.info("consulta_mostrar_vigente", cod_modular=cod_modular, duracion_ms=duracion_ms)
+    return {"accion": "mostrar", "reporte": guardado["reporte_json"], "n_docentes_evaluados": n_actual}
 
 
 async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> dict:
     """
     POST /reporte/generar -- pipeline completo:
       1. Resuelve cod_modular desde userid.
-      2. Si no hay reporte guardado -> genera y guarda.
-      3. Si hay -> compara n_docentes_evaluados actual vs guardado; si
-         cambió, recalcula y sobreescribe; si no, sirve el guardado.
-      4. Registra la asociación directivo-reporte (courseid/cmid: trazabilidad).
+      2. Si no hay fila en reportes_directivo -> intenta generar.
+      3. Si hay fila con estado='generado' -> compara n_docentes_evaluados
+         actual vs guardado; si cambió, recalcula; si no, sirve el guardado.
+      4. Si hay fila con estado distinto de 'generado' (intento previo
+         fallido) -> reintenta generar con los datos actuales.
+      5. Cualquier intento (éxito o falla) actualiza el estado guardado,
+         para que el directivo sepa por qué no tiene informe todavía.
+      6. Registra la asociación directivo-reporte solo si se logra
+         generar (courseid/cmid: trazabilidad).
     """
     inicio = time.monotonic()
     log.info("reporte_solicitado", userid=userid, courseid=courseid, cmid=cmid)
@@ -601,31 +737,42 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
 
     guardado = await obtener_reporte_guardado(cod_modular)
 
-    if guardado is None:
-        log.info("cache_miss", cod_modular=cod_modular, motivo="sin_registro_previo")
-        reporte = await generar_reporte(cod_modular, nombre_ie)
-        id_reporte = await guardar_reporte(
-            cod_modular, reporte["n_docentes_evaluados"], reporte, es_actualizacion=False
-        )
-    else:
+    debe_generar = (
+        guardado is None
+        or guardado["estado"] != "generado"
+    )
+
+    if guardado is not None and guardado["estado"] == "generado":
         filas_actuales = await obtener_filas_vista(cod_modular)
         n_actual = len(agrupar_por_docente(filas_actuales))
-
-        if n_actual != guardado["n_docentes_evaluados"]:
+        debe_generar = n_actual != guardado["n_docentes_evaluados"]
+        if debe_generar:
             log.info(
                 "cache_invalidado",
                 cod_modular=cod_modular,
                 n_docentes_guardado=guardado["n_docentes_evaluados"],
                 n_docentes_actual=n_actual,
             )
+
+    if not debe_generar:
+        log.info("cache_hit", cod_modular=cod_modular, n_docentes=guardado["n_docentes_evaluados"])
+        id_reporte = guardado["id"]
+        reporte = guardado["reporte_json"]
+    else:
+        log.info("cache_miss_o_reintento", cod_modular=cod_modular)
+        try:
             reporte = await generar_reporte(cod_modular, nombre_ie)
-            id_reporte = await guardar_reporte(
-                cod_modular, reporte["n_docentes_evaluados"], reporte, es_actualizacion=True
-            )
-        else:
-            log.info("cache_hit", cod_modular=cod_modular, n_docentes=n_actual)
-            reporte = guardado["reporte_json"]
-            id_reporte = guardado["id"]
+        except MuestraInsuficienteError:
+            n_actual = await contar_docentes_evaluados(cod_modular)
+            await guardar_estado_reporte(cod_modular, "muestra_insuficiente", n_actual)
+            raise
+        except SinDatosDisponiblesError:
+            await guardar_estado_reporte(cod_modular, "sin_datos", 0)
+            raise
+
+        id_reporte = await guardar_estado_reporte(
+            cod_modular, "generado", reporte["n_docentes_evaluados"], reporte
+        )
 
     await registrar_consulta(cod_modular, userid, courseid, cmid, id_reporte)
 

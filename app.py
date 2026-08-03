@@ -50,7 +50,14 @@ async def health():
 @app.get("/reporte/consultar")
 async def consultar_reporte(userid: int):
     """
-    Devuelve el reporte tal cual está guardado en caché.
+    Endpoint rápido de solo lectura (nunca toca el LLM). Responde con
+    una acción que le indica al frontend qué hacer:
+
+      - accion="mostrar":          reporte vigente, se devuelve completo.
+      - accion="generar":          no hay reporte o está desactualizado;
+                                    llamar a POST /reporte/generar.
+      - accion="esperar_docentes": aún no hay suficientes docentes
+                                    evaluados; no generar todavía.
     """
     try:
         return await core.consultar_reporte_existente(userid)
@@ -58,12 +65,6 @@ async def consultar_reporte(userid: int):
     except core.DirectivoNoEncontradoError:
         log.warning("endpoint_consultar_directivo_no_encontrado", userid=userid)
         raise HTTPException(404, f"No se encontró IE asociada al userid {userid}")
-
-    except core.ReporteNoExisteError:
-        log.info("endpoint_consultar_no_existe", userid=userid)
-        raise HTTPException(
-            404, "Aún no se ha generado un reporte para esta IE. Usa POST /reporte/generar."
-        )
 
     except Exception:
         log.error("endpoint_consultar_error_no_manejado", userid=userid, exc_info=True)
@@ -87,6 +88,14 @@ async def generar_reporte_endpoint(payload: ReporteRequest, courseid: int, cmid:
     except core.SinDatosDisponiblesError:
         log.warning("endpoint_generar_sin_datos", userid=payload.userid, courseid=courseid)
         raise HTTPException(404, "No hay evidencias de Sesión registradas todavía para esta IE")
+
+    except core.MuestraInsuficienteError:
+        log.warning("endpoint_generar_muestra_insuficiente", userid=payload.userid, courseid=courseid)
+        raise HTTPException(
+            409,
+            f"Aún no se alcanza el mínimo de {core.UMBRAL_MUESTRA_INSUFICIENTE} docentes "
+            "evaluados para generar el reporte.",
+        )
 
     except Exception:
         log.error(
