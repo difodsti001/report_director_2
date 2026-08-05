@@ -169,13 +169,97 @@ async def _asegurar_schema_cache() -> None:
 # =============================================================================
 # Configuración de negocio
 # =============================================================================
-CAMPO_FILTRO_IE = "cod_modular"
+# Filtro compuesto de IE: no existe una columna única con el identificador
+# de institución, se arma a partir de 3 columnas presentes en AMBAS
+# tablas (base_ebr_IA y vw_processing_brechas_ebr). Se comparan por
+# separado en el WHERE (AND), no concatenadas con CONCAT()/|| -- así
+# Postgres puede usar índices existentes sobre estas columnas en vez de
+# forzar un escaneo completo por cada fila.
+#
+# "región" lleva tilde tal cual en la base -- con comillas dobles en el
+# SQL para que Postgres la resuelva exacta.
+COLUMNAS_FILTRO_IE = ("nombre_ie", '"región"', "distrito")
+
+# Separador para armar la clave compuesta que identifica a la IE en el
+# caché (f4_reportes_directivo, f4_consultas_directivo) y en los logs
+_SEPARADOR_CLAVE_IE = "|"
+
+
+def _armar_clave_ie(nombre_ie: str, region: str, distrito: str) -> str:
+    """Arma la clave compuesta que identifica una IE en el caché, a
+    partir de los 3 valores ya resueltos desde la consulta SQL."""
+    return _SEPARADOR_CLAVE_IE.join([nombre_ie or "", region or "", distrito or ""])
+
+
+# =============================================================================
+# Referencia de criterios y brechas
+# =============================================================================
+
+CRITERIOS: dict[str, dict[str, str]] = {
+    "C1": {
+        "nombre": "Coherencia propósito–desafíos",
+        "que_evalua": (
+            "Que la sesión responda a los desafíos identificados en el "
+            "diagnóstico previo (MPE/ENLA/evidencias de aula), no a un "
+            "formato genérico."
+        ),
+    },
+    "C2": {
+        "nombre": "Situación significativa",
+        "que_evalua": (
+            "Que la situación de aprendizaje esté orientada al desarrollo "
+            "de competencias y pensamiento crítico, no solo a completar "
+            "actividades."
+        ),
+    },
+    "C3": {
+        "nombre": "Demanda cognitiva de las actividades",
+        "que_evalua": (
+            "Que las actividades propuestas exijan análisis, toma de "
+            "decisiones o argumentación, no solo participación."
+        ),
+    },
+    "C4": {
+        "nombre": "Mediación y evaluación formativa",
+        "que_evalua": (
+            "Que las estrategias de mediación y los criterios de "
+            "evaluación formativa sean coherentes entre sí y con el "
+            "propósito."
+        ),
+    },
+    "C5": {
+        "nombre": "Uso pertinente de recursos y espacios",
+        "que_evalua": (
+            "Que los recursos y espacios educativos elegidos respondan a "
+            "una decisión pedagógica, no a disponibilidad."
+        ),
+    },
+}
+
+BRECHAS: dict[str, dict[str, str]] = {
+    "B1": {"nombre": "Diseño desarticulado del diagnóstico", "tipo": "Crítica"},
+    "B2": {"nombre": "Participación superficial sin fundamentación en evidencias", "tipo": "Crítica"},
+    "B3": {"nombre": "Situación significativa débil o genérica", "tipo": "Estructural"},
+    "B4": {"nombre": "Mediación/evaluación formativa poco coherente", "tipo": "Estructural"},
+    "B5": {"nombre": "Uso de recursos o espacios no justificado", "tipo": "De ajuste"},
+}
+
+
+def _nombre_criterio(criterio_id: str) -> str:
+    """'C1' -> 'C1 (Coherencia propósito–desafíos)'. Si el id no está en
+    el diccionario (por ejemplo un criterio nuevo aún no documentado),
+    retorna el id tal cual, sin romper el flujo."""
+    info = CRITERIOS.get(criterio_id)
+    return f"{criterio_id} ({info['nombre']})" if info else criterio_id
+
+
+def _nombre_brecha(brecha_id: str) -> str:
+    """'B4' -> 'B4 (Mediación/evaluación formativa poco coherente)'."""
+    info = BRECHAS.get(brecha_id)
+    return f"{brecha_id} ({info['nombre']})" if info else brecha_id
+
+
 # Cargos que cuentan como "docente" en base_ebr_IA para pct_cobertura.
-# La comparación en SQL se hace con UPPER() en ambos lados (ver
-# contar_docentes_total) para no depender del casing exacto que traiga
-# la columna real -- se confirmó que viene en mayúsculas ("DOCENTE",
-# "DIRECTIVO", "JERARQUICO" o similar), pero no asumimos que siempre
-# será consistente.
 CARGOS_DOCENTE = ("DOCENTE", "JERARQUICO")
 
 # Prioridad de las brechas (crítica>estructural>de ajuste) y de niveles (inicio>en_proceso)
@@ -187,7 +271,7 @@ UMBRAL_FORTALEZA_PCT_LOGRADO = 60
 UMBRAL_OPORTUNIDAD_PCT_EN_PROCESO = 50
 UMBRAL_DESAFIO_PCT_INICIAL = 40
 UMBRAL_DESAFIO_PCT_BRECHA = 30
-UMBRAL_MUESTRA_INSUFICIENTE = 5
+UMBRAL_MUESTRA_INSUFICIENTE = 1
 
 # Cursos y cmids de docentes
 CMIDS_DOCENTES_POR_CURSO: dict[int, list[int] | None] = {
@@ -233,10 +317,18 @@ def _cmids_docentes_configurados() -> list[int]:
 # =============================================================================
 
 async def resolver_cod_modular(userid: int) -> dict:
-    """Busca la IE / cod_modular asociada al userid del directivo.
-    Retorna {"cod_modular": ..., "nombre_ie": ...}."""
+    """
+    Busca la IE del directivo por userid, trayendo las 3 columnas del
+    filtro compuesto (nombre_ie, región, distrito). Retorna
+    {"cod_modular": <clave compuesta>, "nombre_ie": ..., "region": ...,
+    "distrito": ...} -- el campo "cod_modular" en el diccionario de
+    retorno se mantiene por compatibilidad con el resto del pipeline
+    (caché, logs, registrar_consulta), aunque ya no es la columna
+    cod_modular de la base sino la clave compuesta armada con
+    _armar_clave_ie.
+    """
     query = """
-        SELECT cod_modular, nombre_ie
+        SELECT nombre_ie, "región" AS region, distrito
         FROM public."base_ebr_IA"
         WHERE userid = %(userid)s
         LIMIT 1
@@ -248,30 +340,54 @@ async def resolver_cod_modular(userid: int) -> dict:
         log.warning("directivo_no_encontrado", userid=userid)
         raise DirectivoNoEncontradoError(f"userid {userid} no tiene IE asociada")
 
-    log.info("cod_modular_resuelto", userid=userid, cod_modular=row["cod_modular"])
-    return row
+    clave_ie = _armar_clave_ie(row["nombre_ie"], row["region"], row["distrito"])
+
+    log.info(
+        "cod_modular_resuelto",
+        userid=userid,
+        cod_modular=clave_ie,
+        nombre_ie=row["nombre_ie"],
+        region=row["region"],
+        distrito=row["distrito"],
+    )
+    return {
+        "cod_modular": clave_ie,
+        "nombre_ie": row["nombre_ie"],
+        "region": row["region"],
+        "distrito": row["distrito"],
+    }
 
 
-async def contar_docentes_total(cod_modular: str) -> int:
-    """Cuenta docentes+jerárquicos en base_ebr_IA para esta IE. UPPER()
-    en ambos lados de la comparación de cargo: la columna real trae
-    valores en mayúsculas, pero no dependemos de un casing exacto."""
-    query = f"""
+async def contar_docentes_total(nombre_ie: str, region: str, distrito: str) -> int:
+    """Cuenta docentes+jerárquicos en base_ebr_IA para esta IE, filtrando
+    por las 3 columnas del filtro compuesto (nombre_ie, región, distrito)
+    por separado -- no concatenadas -- para que Postgres pueda usar
+    índices existentes sobre esas columnas."""
+    query = """
         SELECT COUNT(*) AS total
         FROM public."base_ebr_IA"
-        WHERE {CAMPO_FILTRO_IE} = %(valor_filtro)s
+        WHERE nombre_ie = %(nombre_ie)s
+          AND "región" = %(region)s
+          AND distrito = %(distrito)s
           AND UPPER(cargo) = ANY(%(cargos)s)
     """
     async with pool_datos.connection() as conn:
         row = await (await conn.execute(
-            query, {"valor_filtro": cod_modular, "cargos": list(CARGOS_DOCENTE)}
+            query,
+            {
+                "nombre_ie": nombre_ie,
+                "region": region,
+                "distrito": distrito,
+                "cargos": list(CARGOS_DOCENTE),
+            },
         )).fetchone()
 
     return row["total"] if row else 0
 
 
-async def obtener_filas_vista(cod_modular: str) -> list[dict]:
-    """Trae todas las filas, solo con evidencias con status = 'success'."""
+async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str) -> list[dict]:
+    """Trae todas las filas, solo con evidencias con status = 'success'.
+    Filtro compuesto por las 3 columnas, igual que en base_ebr_IA."""
     cmids_validos = _cmids_docentes_configurados()
 
     if not cmids_validos:
@@ -283,21 +399,29 @@ async def obtener_filas_vista(cod_modular: str) -> list[dict]:
     query = """
         SELECT user_id, criterion_index, nivel_obtenido, brecha, tipo_brecha
         FROM public.vw_processing_brechas_ebr
-        WHERE cod_modular = %(cod_modular)s
+        WHERE nombre_ie = %(nombre_ie)s
+          AND "región" = %(region)s
+          AND distrito = %(distrito)s
           AND cmid = ANY(%(cmids_validos)s)
           AND status = 'success'
         ORDER BY user_id, criterion_index
     """
     async with pool_datos.connection() as conn:
         rows = await (await conn.execute(
-            query, {"cod_modular": cod_modular, "cmids_validos": cmids_validos}
+            query,
+            {
+                "nombre_ie": nombre_ie,
+                "region": region,
+                "distrito": distrito,
+                "cmids_validos": cmids_validos,
+            },
         )).fetchall()
 
-    log.info("filas_vista_obtenidas", cod_modular=cod_modular, n_filas=len(rows))
+    log.info("filas_vista_obtenidas", nombre_ie=nombre_ie, region=region, distrito=distrito, n_filas=len(rows))
     return rows
 
 
-async def contar_docentes_evaluados(cod_modular: str) -> int:
+async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str) -> int:
     """
     Cuenta cuántos docentes DISTINTOS tienen al menos una evidencia
     'success' para esta IE, sin traer las filas completas. Más liviana
@@ -312,13 +436,21 @@ async def contar_docentes_evaluados(cod_modular: str) -> int:
     query = """
         SELECT COUNT(DISTINCT user_id) AS total
         FROM public.vw_processing_brechas_ebr
-        WHERE cod_modular = %(cod_modular)s
+        WHERE nombre_ie = %(nombre_ie)s
+          AND "región" = %(region)s
+          AND distrito = %(distrito)s
           AND cmid = ANY(%(cmids_validos)s)
           AND status = 'success'
     """
     async with pool_datos.connection() as conn:
         row = await (await conn.execute(
-            query, {"cod_modular": cod_modular, "cmids_validos": cmids_validos}
+            query,
+            {
+                "nombre_ie": nombre_ie,
+                "region": region,
+                "distrito": distrito,
+                "cmids_validos": cmids_validos,
+            },
         )).fetchone()
 
     return row["total"] if row else 0
@@ -441,44 +573,113 @@ def clasificar_desafios_prioritarios(distribucion: list[dict], frecuencia_brecha
 # Redacción del texto narrativo (LLM)
 # =============================================================================
 
+def _enriquecer_con_nombres(v: dict) -> dict:
+    """
+    Arma versiones legibles de fortalezas/oportunidades/desafíos con el
+    nombre real del criterio o brecha ya resuelto -- así el LLM no tiene
+    que memorizar el diccionario CRITERIOS/BRECHAS, solo usa el texto
+    que ya viene armado.
+    """
+    fortalezas = [
+        f"{_nombre_criterio(f['id'])}: {f['pct']}% en nivel logrado"
+        for f in v.get("fortalezas_predominantes", [])
+    ]
+    oportunidades = [
+        f"{_nombre_criterio(o['id'])}: {o['pct']}% en proceso"
+        for o in v.get("oportunidades_comunes", [])
+    ]
+    desafios = []
+    for d in v.get("desafios_prioritarios", []):
+        if d["tipo"] == "criterio":
+            desafios.append(f"{_nombre_criterio(d['id'])}: {d['pct']}% en nivel inicial")
+        else:
+            desafios.append(f"{_nombre_brecha(d['id'])}: presente en {d['pct']}% de los docentes evaluados")
+
+    return {"fortalezas": fortalezas, "oportunidades": oportunidades, "desafios": desafios}
+
+
 def _construir_prompt_reporte(v: dict) -> str:
     """Prompt con las restricciones duras: sin identificar docentes, sin
     formato de carta ni placeholders, usando exactamente los porcentajes
-    dados (sin mezclar pct_logrado con pct_en_proceso)."""
+    dados, con nombres reales de criterios/brechas, en el orden oficial
+    del banco de redacción (Resumen ejecutivo -> Fortalezas ->
+    Oportunidades -> Desafíos prioritarios), y sin sugerir acciones --
+    solo describe y prioriza, la decisión queda en manos del directivo."""
+    legible = _enriquecer_con_nombres(v)
+
     return f"""
 Redacta un reporte institucional breve para un directivo de una IE del
 sistema educativo peruano, en español, tono institucional orientado a la
 toma de decisiones colegiadas. No nombres ni des pistas sobre ningún
 docente individual: todas las cifras son agregadas.
-
-Datos:
+ 
+Datos generales (para el Resumen ejecutivo):
 - IE: {v.get('nombre_ie')}
 - Docentes totales registrados: {v.get('n_docentes_total')}
 - Docentes evaluados: {v.get('n_docentes_evaluados')}
 - Cobertura: {v.get('pct_cobertura')}%
 - Muestra insuficiente: {v.get('muestra_insuficiente')}
-- Distribución por criterio: {v.get('distribucion_por_criterio')}
-- Fortalezas predominantes (id de criterio y su % en nivel logrado): {v.get('fortalezas_predominantes')}
-- Oportunidades de mejora comunes (id de criterio y su % en proceso): {v.get('oportunidades_comunes')}
-- Desafíos prioritarios: {v.get('desafios_prioritarios')}
-
+ 
+Fortalezas predominantes:
+{chr(10).join(f"- {f}" for f in legible["fortalezas"]) or "- Ninguna alcanzó el umbral de fortaleza."}
+ 
+Oportunidades de mejora comunes:
+{chr(10).join(f"- {o}" for o in legible["oportunidades"]) or "- Ninguna identificada."}
+ 
+Desafíos prioritarios:
+{chr(10).join(f"- {d}" for d in legible["desafios"]) or "- Ninguno identificado."}
+ 
+Estructura y orden del contenido (seguir este orden exacto de ideas, PERO
+como texto corrido en párrafos -- NO uses títulos ni encabezados de
+sección, ni en negrita ni mencionados explícitamente como "Resumen
+ejecutivo:" o "Fortalezas predominantes:". El lector no debe ver
+etiquetas de sección, solo párrafos que fluyen naturalmente uno tras
+otro siguiendo este orden de contenido):
+1. Primer párrafo: cuántos docentes evaluados de cuántos totales, con
+   el porcentaje de cobertura, a modo de línea base institucional. Tipo
+   "Al cierre del plazo, [n_evaluados] de [n_total] docentes de la
+   institución [nombre_ie] entregaron su Sesión de aprendizaje con evidencia válida
+   ([pct_cobertura]% de cobertura)."
+2. Siguiente párrafo: para cada fortaleza, una frase con el porcentaje
+   y el nombre del criterio, indicando que sugiere una base
+   institucional sólida en esa área.
+3. Siguiente párrafo: para cada oportunidad, una frase con el
+   porcentaje y el criterio, indicando que es una oportunidad
+   compartida (no un caso aislado) para el análisis colegiado.
+4. Último párrafo: para cada desafío, una frase con el porcentaje, el
+   nombre de la brecha o criterio, indicando que requiere atención
+   priorizada en el análisis institucional.
+5. NO agregues un párrafo de cierre ni una recomendación final más allá
+   de esos 4 párrafos. NO sugieras una acción, estrategia o próximo
+   paso concreto -- el reporte describe y prioriza la información, pero
+   la decisión de qué hacer queda enteramente en manos del directivo.
+ 
 Reglas estrictas de formato y contenido:
+- NO uses markdown de ningún tipo: sin negritas (**texto**), sin
+  encabezados (#), sin viñetas ni listas. Solo párrafos de texto plano
+  separados por un salto de línea en blanco.
+- Usa el NOMBRE del criterio o la brecha tal como aparece arriba (ej.
+  "Mediación y evaluación formativa"), no solo el código "C4" o "B4" a
+  secas -- el directivo no memoriza los códigos.
 - NO uses formato de carta formal. Sin fecha, sin "Dirigido a:", sin
   "Atentamente", sin nombre de remitente ni destinatario, y sobre todo
   SIN placeholders entre corchetes como "[Nombre del directivo]" o
   "[Fecha del reporte]". Si no tienes un dato, simplemente no lo
   menciones -- nunca inventes un marcador de posición.
-- Al citar el porcentaje de una fortaleza, usa EXACTAMENTE el % que viene
-  junto a ese criterio en "Fortalezas predominantes" (es su % en nivel
-  logrado). Al citar una oportunidad de mejora, usa EXACTAMENTE el % que
-  viene junto a ese criterio en "Oportunidades de mejora comunes" (es su
-  % en proceso, NO el % logrado). No calcules ni copies un porcentaje de
-  otra sección de los datos.
+- Usa EXACTAMENTE los porcentajes ya calculados arriba, tal como están
+  escritos junto a cada criterio o brecha. No los recalcules ni los
+  mezcles entre secciones.
+- El primer párrafo DEBE declarar explícitamente cuántos docentes se
+  evaluaron de cuántos totales y el % de cobertura -- nunca omitas este
+  dato ni presentes los porcentajes de fortalezas/oportunidades/desafíos
+  como si representaran a toda la plana docente de la institución. Todos
+  esos porcentajes son sobre los docentes EVALUADOS, no sobre el total.
 - Si "Muestra insuficiente" es verdadero, evita expresiones categóricas
   como "la mayoría" o "el patrón institucional"; usa formulaciones
   referenciales ("de los docentes evaluados hasta la fecha...").
 - No compares esta IE con otras instituciones. No uses lenguaje
-  evaluativo sobre docentes individuales.
+  evaluativo sobre docentes individuales. No sugieras acciones,
+  estrategias, ni próximos pasos -- solo describe y prioriza.
 """.strip()
 
 
@@ -514,8 +715,14 @@ async def redactar_texto_reporte(variables: dict) -> str:
 # Orquestador de generación
 # =============================================================================
 
-async def generar_reporte(cod_modular: str, nombre_ie: str) -> dict:
-    filas = await obtener_filas_vista(cod_modular)
+async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrito: str) -> dict:
+    """
+    cod_modular aquí es la CLAVE COMPUESTA (nombre_ie|región|distrito),
+    usada solo para logs y como identificador en el JSON de salida.
+    nombre_ie, region, distrito por separado son los que se usan en las
+    queries reales contra base_ebr_IA y vw_processing_brechas_ebr.
+    """
+    filas = await obtener_filas_vista(nombre_ie, region, distrito)
     if not filas:
         raise SinDatosDisponiblesError(f"Sin datos en la vista para {cod_modular}")
 
@@ -533,7 +740,7 @@ async def generar_reporte(cod_modular: str, nombre_ie: str) -> dict:
             f"mínimo requerido {UMBRAL_MUESTRA_INSUFICIENTE}"
         )
 
-    n_docentes_total = await contar_docentes_total(cod_modular)
+    n_docentes_total = await contar_docentes_total(nombre_ie, region, distrito)
     pct_cobertura = (
         round(100 * n_docentes_evaluados / n_docentes_total) if n_docentes_total > 0 else 0
     )
@@ -676,7 +883,7 @@ async def consultar_reporte_existente(userid: int) -> dict:
     cod_modular = ie["cod_modular"]
 
     guardado = await obtener_reporte_guardado(cod_modular)
-    n_actual = await contar_docentes_evaluados(cod_modular)
+    n_actual = await contar_docentes_evaluados(ie["nombre_ie"], ie["region"], ie["distrito"])
 
     duracion_ms = round((time.monotonic() - inicio) * 1000)
 
@@ -734,6 +941,8 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
     ie = await resolver_cod_modular(userid)
     cod_modular = ie["cod_modular"]
     nombre_ie = ie["nombre_ie"]
+    region = ie["region"]
+    distrito = ie["distrito"]
 
     guardado = await obtener_reporte_guardado(cod_modular)
 
@@ -743,7 +952,7 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
     )
 
     if guardado is not None and guardado["estado"] == "generado":
-        filas_actuales = await obtener_filas_vista(cod_modular)
+        filas_actuales = await obtener_filas_vista(nombre_ie, region, distrito)
         n_actual = len(agrupar_por_docente(filas_actuales))
         debe_generar = n_actual != guardado["n_docentes_evaluados"]
         if debe_generar:
@@ -761,9 +970,9 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
     else:
         log.info("cache_miss_o_reintento", cod_modular=cod_modular)
         try:
-            reporte = await generar_reporte(cod_modular, nombre_ie)
+            reporte = await generar_reporte(cod_modular, nombre_ie, region, distrito)
         except MuestraInsuficienteError:
-            n_actual = await contar_docentes_evaluados(cod_modular)
+            n_actual = await contar_docentes_evaluados(nombre_ie, region, distrito)
             await guardar_estado_reporte(cod_modular, "muestra_insuficiente", n_actual)
             raise
         except SinDatosDisponiblesError:
