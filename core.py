@@ -181,7 +181,9 @@ async def _asegurar_schema_cache() -> None:
 COLUMNAS_FILTRO_IE = ("nombre_ie", '"región"', "distrito")
 
 # Separador para armar la clave compuesta que identifica a la IE en el
-# caché (f4_reportes_directivo, f4_consultas_directivo) y en los logs
+# caché (f4_reportes_directivo, f4_consultas_directivo) y en los logs --
+# ahí sí se necesita un solo string, porque esas tablas tienen una sola
+# columna cod_modular/clave_ie, no 3 columnas separadas.
 _SEPARADOR_CLAVE_IE = "|"
 
 
@@ -192,7 +194,8 @@ def _armar_clave_ie(nombre_ie: str, region: str, distrito: str) -> str:
 
 
 # =============================================================================
-# Referencia de criterios y brechas
+# Referencia de criterios y brechas -- usados para enriquecer el prompt
+# del LLM con nombres reales en vez de solo "C1", "C4", etc.
 # =============================================================================
 
 CRITERIOS: dict[str, dict[str, str]] = {
@@ -260,6 +263,11 @@ def _nombre_brecha(brecha_id: str) -> str:
 
 
 # Cargos que cuentan como "docente" en base_ebr_IA para pct_cobertura.
+# La comparación en SQL se hace con UPPER() en ambos lados (ver
+# contar_docentes_total) para no depender del casing exacto que traiga
+# la columna real -- se confirmó que viene en mayúsculas ("DOCENTE",
+# "DIRECTIVO", "JERARQUICO" o similar), pero no asumimos que siempre
+# será consistente.
 CARGOS_DOCENTE = ("DOCENTE", "JERARQUICO")
 
 # Prioridad de las brechas (crítica>estructural>de ajuste) y de niveles (inicio>en_proceso)
@@ -271,7 +279,7 @@ UMBRAL_FORTALEZA_PCT_LOGRADO = 60
 UMBRAL_OPORTUNIDAD_PCT_EN_PROCESO = 50
 UMBRAL_DESAFIO_PCT_INICIAL = 40
 UMBRAL_DESAFIO_PCT_BRECHA = 30
-UMBRAL_MUESTRA_INSUFICIENTE = 1
+UMBRAL_MUESTRA_INSUFICIENTE = 5
 
 # Cursos y cmids de docentes
 CMIDS_DOCENTES_POR_CURSO: dict[int, list[int] | None] = {
@@ -368,7 +376,7 @@ async def contar_docentes_total(nombre_ie: str, region: str, distrito: str) -> i
         FROM public."base_ebr_IA"
         WHERE nombre_ie = %(nombre_ie)s
           AND "región" = %(region)s
-          AND distrito = %(distrito)s
+          AND distrito IS NOT DISTINCT FROM %(distrito)s
           AND UPPER(cargo) = ANY(%(cargos)s)
     """
     async with pool_datos.connection() as conn:
@@ -401,7 +409,7 @@ async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str) -> lis
         FROM public.vw_processing_brechas_ebr
         WHERE nombre_ie = %(nombre_ie)s
           AND "región" = %(region)s
-          AND distrito = %(distrito)s
+          AND distrito IS NOT DISTINCT FROM %(distrito)s
           AND cmid = ANY(%(cmids_validos)s)
           AND status = 'success'
         ORDER BY user_id, criterion_index
@@ -438,7 +446,7 @@ async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str) 
         FROM public.vw_processing_brechas_ebr
         WHERE nombre_ie = %(nombre_ie)s
           AND "región" = %(region)s
-          AND distrito = %(distrito)s
+          AND distrito IS NOT DISTINCT FROM %(distrito)s
           AND cmid = ANY(%(cmids_validos)s)
           AND status = 'success'
     """
@@ -612,23 +620,23 @@ Redacta un reporte institucional breve para un directivo de una IE del
 sistema educativo peruano, en español, tono institucional orientado a la
 toma de decisiones colegiadas. No nombres ni des pistas sobre ningún
 docente individual: todas las cifras son agregadas.
- 
+
 Datos generales (para el Resumen ejecutivo):
 - IE: {v.get('nombre_ie')}
 - Docentes totales registrados: {v.get('n_docentes_total')}
 - Docentes evaluados: {v.get('n_docentes_evaluados')}
 - Cobertura: {v.get('pct_cobertura')}%
 - Muestra insuficiente: {v.get('muestra_insuficiente')}
- 
+
 Fortalezas predominantes:
 {chr(10).join(f"- {f}" for f in legible["fortalezas"]) or "- Ninguna alcanzó el umbral de fortaleza."}
- 
+
 Oportunidades de mejora comunes:
 {chr(10).join(f"- {o}" for o in legible["oportunidades"]) or "- Ninguna identificada."}
- 
+
 Desafíos prioritarios:
 {chr(10).join(f"- {d}" for d in legible["desafios"]) or "- Ninguno identificado."}
- 
+
 Estructura y orden del contenido (seguir este orden exacto de ideas, PERO
 como texto corrido en párrafos -- NO uses títulos ni encabezados de
 sección, ni en negrita ni mencionados explícitamente como "Resumen
@@ -638,7 +646,7 @@ otro siguiendo este orden de contenido):
 1. Primer párrafo: cuántos docentes evaluados de cuántos totales, con
    el porcentaje de cobertura, a modo de línea base institucional. Tipo
    "Al cierre del plazo, [n_evaluados] de [n_total] docentes de la
-   institución [nombre_ie] entregaron su Sesión de aprendizaje con evidencia válida
+   institución entregaron su Sesión de aprendizaje con evidencia válida
    ([pct_cobertura]% de cobertura)."
 2. Siguiente párrafo: para cada fortaleza, una frase con el porcentaje
    y el nombre del criterio, indicando que sugiere una base
@@ -653,7 +661,7 @@ otro siguiendo este orden de contenido):
    de esos 4 párrafos. NO sugieras una acción, estrategia o próximo
    paso concreto -- el reporte describe y prioriza la información, pero
    la decisión de qué hacer queda enteramente en manos del directivo.
- 
+
 Reglas estrictas de formato y contenido:
 - NO uses markdown de ningún tipo: sin negritas (**texto**), sin
   encabezados (#), sin viñetas ni listas. Solo párrafos de texto plano
