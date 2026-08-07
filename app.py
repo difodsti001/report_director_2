@@ -17,7 +17,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import structlog
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 import core
@@ -37,9 +40,25 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Reporte institucional - Hito 1 Directivo", lifespan=lifespan)
 
+# Dev: permite que el dashboard HTML servido en otro puerto/origen llame a la API.
+# Restringir allow_origins a los dominios reales antes de producción.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.environ.get("CORS_ALLOW_ORIGINS", "*").split(","),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+templates = Jinja2Templates(directory="templates")
+
 
 class ReporteRequest(BaseModel):
     userid: int
+
+
+@app.get("/reporte_director", response_class=HTMLResponse)
+async def reporte_dashboard(request: Request):
+    return templates.TemplateResponse(request, "index_director.html")
 
 
 @app.get("/health")

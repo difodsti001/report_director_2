@@ -6,3 +6,4 @@ openai
 python-dotenv
 certifi
 structlog
+jinja2
