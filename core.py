@@ -82,9 +82,11 @@ class ReporteNoExisteError(Exception):
 
 
 class MuestraInsuficienteError(Exception):
-    """Aún no hay UMBRAL_MUESTRA_INSUFICIENTE docentes evaluados. No se
-    genera el reporte para no gastar una llamada al LLM sin necesidad --
-    ver GET /reporte/consultar, que evalúa esto antes de sugerir generar."""
+    """No usada actualmente para bloquear generación -- se mantiene
+    declarada por si se requiere en el futuro. La condición de muestra
+    insuficiente hoy se maneja como dato dentro del reporte
+    (variables["muestra_insuficiente"]), no como bloqueo: el reporte se
+    genera igual, marcado como referencial. Ver generar_reporte."""
 
 
 # =============================================================================
@@ -562,8 +564,19 @@ def clasificar_fortalezas_y_oportunidades(distribucion: list[dict]) -> tuple[lis
 
 
 def clasificar_desafios_prioritarios(distribucion: list[dict], frecuencia_brechas: dict[str, dict]) -> list[dict]:
-    """Desafío: criterio >= 40% en inicial, O brecha presente en >= 30%
-    de las entregas (ya reducidas)."""
+    """
+    Desafío prioritario (según documentación de la Ruta Formativa):
+      - Criterio C_i con >= 40% de docentes en nivel "inicial", O
+      - Brecha CRÍTICA (B1 o B2 -- tipo="Crítica" en BRECHAS) presente
+        en >= 30% de las entregas válidas.
+
+    Importante: brechas Estructurales (B3, B4) o De ajuste (B5) NO
+    activan esta regla aunque superen el umbral de %, sin importar qué
+    tan frecuentes sean -- solo las Críticas cuentan aquí. Esto es
+    intencional: el desafío prioritario se reserva para lo más urgente
+    en relación con la planificación pedagógica, no cualquier brecha
+    frecuente.
+    """
     desafios = []
 
     for c in distribucion:
@@ -571,7 +584,8 @@ def clasificar_desafios_prioritarios(distribucion: list[dict], frecuencia_brecha
             desafios.append({"tipo": "criterio", "id": c["criterio_id"], "pct": c["pct_inicial"]})
 
     for brecha_id, info in frecuencia_brechas.items():
-        if info["pct"] >= UMBRAL_DESAFIO_PCT_BRECHA:
+        es_critica = BRECHAS.get(brecha_id, {}).get("tipo") == "Crítica"
+        if es_critica and info["pct"] >= UMBRAL_DESAFIO_PCT_BRECHA:
             desafios.append({"tipo": "brecha", "id": brecha_id, "pct": info["pct"]})
 
     return desafios
@@ -737,21 +751,27 @@ async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrit
     filas_por_docente = agrupar_por_docente(filas)
     n_docentes_evaluados = len(filas_por_docente)
 
-    if n_docentes_evaluados < UMBRAL_MUESTRA_INSUFICIENTE:
-        log.info(
-            "generacion_bloqueada_muestra_insuficiente",
-            cod_modular=cod_modular,
-            n_docentes_evaluados=n_docentes_evaluados,
-        )
-        raise MuestraInsuficienteError(
-            f"{cod_modular} tiene {n_docentes_evaluados} docentes evaluados, "
-            f"mínimo requerido {UMBRAL_MUESTRA_INSUFICIENTE}"
-        )
-
     n_docentes_total = await contar_docentes_total(nombre_ie, region, distrito)
     pct_cobertura = (
         round(100 * n_docentes_evaluados / n_docentes_total) if n_docentes_total > 0 else 0
     )
+
+    # Muestra insuficiente: menos de UMBRAL_MUESTRA_INSUFICIENTE docentes
+    # evaluados EN TÉRMINOS ABSOLUTOS, Y ADEMÁS cobertura incompleta. Si
+    # ya se evaluó al 100% de la plana docente de esta IE (por ejemplo,
+    # una IE con solo 3 docentes en total, los 3 evaluados), no hay
+    # "más muestra" posible -- nunca se marca como insuficiente sin
+    # importar el conteo absoluto.
+    muestra_insuficiente = (
+        n_docentes_evaluados < UMBRAL_MUESTRA_INSUFICIENTE and pct_cobertura < 100
+    )
+    if muestra_insuficiente:
+        log.info(
+            "reporte_generado_muestra_insuficiente",
+            cod_modular=cod_modular,
+            n_docentes_evaluados=n_docentes_evaluados,
+            pct_cobertura=pct_cobertura,
+        )
 
     brechas_por_docente = {
         user_id: seleccionar_brechas_globales(filas_docente)
@@ -770,8 +790,7 @@ async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrit
         "n_docentes_total": n_docentes_total,
         "n_docentes_evaluados": n_docentes_evaluados,
         "pct_cobertura": pct_cobertura,
-        "muestra_insuficiente": False,  # siempre False aquí: generar_reporte
-        # ya bloqueó arriba si n_docentes_evaluados < UMBRAL_MUESTRA_INSUFICIENTE
+        "muestra_insuficiente": muestra_insuficiente,
         "distribucion_por_criterio": distribucion,
         "fortalezas_predominantes": fortalezas,
         "oportunidades_comunes": oportunidades,
@@ -876,11 +895,11 @@ async def consultar_reporte_existente(userid: int) -> dict:
          que se generó -> accion="mostrar", reporte vigente tal cual.
       3. Hay reporte, pero el número de docentes evaluados cambió ->
          accion="generar" (el frontend dispara la regeneración).
-      4. No hay reporte, y aún no se llega al mínimo de docentes ->
-         accion="esperar_docentes". NO se debe llamar a generar en este
-         caso -- generar produciría igual un reporte con
-         muestra_insuficiente=true, gastando una llamada al LLM sin
-         necesidad. El frontend muestra un estado de espera.
+      4. No hay reporte, y aún no se llega al mínimo de docentes NI se
+         cubrió el 100% de la plana docente de la IE -> accion=
+         "esperar_docentes". Si una IE ya evaluó a TODOS sus docentes
+         (aunque sean menos de 5 en total), no tiene sentido esperar
+         más -- se genera igual, marcado como muestra_insuficiente.
 
     Retorna siempre {"accion": ..., "reporte": ... | None, "n_docentes_evaluados": ...}
     """
@@ -892,15 +911,19 @@ async def consultar_reporte_existente(userid: int) -> dict:
 
     guardado = await obtener_reporte_guardado(cod_modular)
     n_actual = await contar_docentes_evaluados(ie["nombre_ie"], ie["region"], ie["distrito"])
+    n_total = await contar_docentes_total(ie["nombre_ie"], ie["region"], ie["distrito"])
+    pct_cobertura_actual = round(100 * n_actual / n_total) if n_total > 0 else 0
 
     duracion_ms = round((time.monotonic() - inicio) * 1000)
 
     if guardado is None:
-        if n_actual < UMBRAL_MUESTRA_INSUFICIENTE:
+        debe_esperar = n_actual < UMBRAL_MUESTRA_INSUFICIENTE and pct_cobertura_actual < 100
+        if debe_esperar:
             log.info(
                 "consulta_esperar_docentes",
                 cod_modular=cod_modular,
                 n_docentes_evaluados=n_actual,
+                pct_cobertura=pct_cobertura_actual,
                 duracion_ms=duracion_ms,
             )
             return {"accion": "esperar_docentes", "reporte": None, "n_docentes_evaluados": n_actual}
@@ -979,14 +1002,15 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
         log.info("cache_miss_o_reintento", cod_modular=cod_modular)
         try:
             reporte = await generar_reporte(cod_modular, nombre_ie, region, distrito)
-        except MuestraInsuficienteError:
-            n_actual = await contar_docentes_evaluados(nombre_ie, region, distrito)
-            await guardar_estado_reporte(cod_modular, "muestra_insuficiente", n_actual)
-            raise
         except SinDatosDisponiblesError:
             await guardar_estado_reporte(cod_modular, "sin_datos", 0)
             raise
 
+        # estado='generado' aunque el reporte tenga muestra_insuficiente=True
+        # -- se generó igual, solo va marcado como referencial en su
+        # propio campo. "muestra_insuficiente" como estado de
+        # f4_reportes_directivo queda reservado para cuando NO hay
+        # reporte en absoluto (ver consultar_reporte_existente).
         id_reporte = await guardar_estado_reporte(
             cod_modular, "generado", reporte["n_docentes_evaluados"], reporte
         )
