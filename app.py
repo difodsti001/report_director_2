@@ -17,8 +17,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import structlog
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 import core
@@ -47,9 +49,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+templates = Jinja2Templates(directory="templates")
+
 
 class ReporteRequest(BaseModel):
     userid: int
+
+
+@app.get("/reporte_director", response_class=HTMLResponse)
+async def reporte_dashboard(request: Request):
+    return templates.TemplateResponse(request, "index_director.html")
 
 
 @app.get("/health")
