@@ -379,6 +379,38 @@
     .legend-item { display: flex; align-items: center; gap: 6px; }
     .legend-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 
+    .criterios-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 14px;
+      margin: 10px 0 0;
+      padding-top: 10px;
+      border-top: 1px dashed var(--gridline);
+    }
+    .criterio-legend-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.76rem;
+      color: var(--text-secondary);
+      cursor: help;
+    }
+    .criterio-legend-id {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 17px;
+      padding: 0 4px;
+      border-radius: 4px;
+      background: var(--brand-red-light);
+      color: var(--brand-red);
+      font-weight: 700;
+      font-size: 0.68rem;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
     .criterios-chart {
       display: flex;
       flex-direction: column;
@@ -623,6 +655,24 @@
         <div id="criterios-chart" class="criterios-chart"></div>
         <div id="criterios-table-wrap" hidden>
           <table class="data-table" id="criterios-table"></table>
+        </div>
+
+        <div class="criterios-legend" id="criterios-legend">
+          <span class="criterio-legend-chip" title="Criterio 1 (C1): Evalúa que la sesión responda a los desafíos identificados en el diagnóstico previo (MPE/ENLA/evidencias de aula), no a un formato genérico.">
+            <span class="criterio-legend-id">C1</span>Coherencia propósito–desafíos
+          </span>
+          <span class="criterio-legend-chip" title="Criterio 2 (C2): Evalúa que la situación de aprendizaje esté orientada al desarrollo de competencias y pensamiento crítico, no solo a completar actividades.">
+            <span class="criterio-legend-id">C2</span>Situación significativa
+          </span>
+          <span class="criterio-legend-chip" title="Criterio 3 (C3): Evalúa que las actividades propuestas exijan análisis, toma de decisiones o argumentación, no solo participación.">
+            <span class="criterio-legend-id">C3</span>Demanda cognitiva de las actividades
+          </span>
+          <span class="criterio-legend-chip" title="Criterio 4 (C4): Evalúa que las estrategias de mediación y los criterios de evaluación formativa sean coherentes entre sí y con el propósito.">
+            <span class="criterio-legend-id">C4</span>Mediación y evaluación formativa
+          </span>
+          <span class="criterio-legend-chip" title="Criterio 5 (C5): Evalúa que los recursos y espacios educativos elegidos respondan a una decisión pedagógica, no a disponibilidad.">
+            <span class="criterio-legend-id">C5</span>Uso pertinente de recursos y espacios
+          </span>
         </div>
       </section>
 
