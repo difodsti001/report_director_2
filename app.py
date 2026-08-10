@@ -108,14 +108,6 @@ async def generar_reporte_endpoint(payload: ReporteRequest, courseid: int, cmid:
         log.warning("endpoint_generar_sin_datos", userid=payload.userid, courseid=courseid)
         raise HTTPException(404, "No hay evidencias de Sesión registradas todavía para esta IE")
 
-    except core.MuestraInsuficienteError:
-        log.warning("endpoint_generar_muestra_insuficiente", userid=payload.userid, courseid=courseid)
-        raise HTTPException(
-            409,
-            f"Aún no se alcanza el mínimo de {core.UMBRAL_MUESTRA_INSUFICIENTE} docentes "
-            "evaluados para generar el reporte.",
-        )
-
     except Exception:
         log.error(
             "endpoint_generar_error_no_manejado",
