@@ -271,6 +271,49 @@
       padding: 2px 8px;
     }
 
+    /* ---------------------------------------------------------------------
+     * Pestañas de nivel educativo
+     * ------------------------------------------------------------------- */
+    .nivel-tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 2px solid var(--gridline);
+      margin-bottom: 24px;
+    }
+    .nivel-tab-btn {
+      font-family: var(--font);
+      font-size: 0.9rem;
+      font-weight: 500;
+      padding: 10px 18px;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+    }
+    .nivel-tab-btn:hover { color: var(--text-primary); }
+    .nivel-tab-btn.active {
+      color: var(--brand-red);
+      border-bottom-color: var(--brand-red);
+      font-weight: 600;
+    }
+    .nivel-panel { display: none; }
+    .nivel-panel.active { display: block; }
+    .nivel-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .btn-descargar-pdf {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
     /* Estados de pantalla completa: acceso inválido / primera vez */
     .state-card {
       background: var(--surface-1);
@@ -411,6 +454,38 @@
     }
     .legend-item { display: flex; align-items: center; gap: 6px; }
     .legend-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+    .criterios-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 14px;
+      margin: 10px 0 0;
+      padding-top: 10px;
+      border-top: 1px dashed var(--gridline);
+    }
+    .criterio-legend-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.76rem;
+      color: var(--text-secondary);
+      cursor: help;
+    }
+    .criterio-legend-id {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 17px;
+      padding: 0 4px;
+      border-radius: 4px;
+      background: var(--brand-red-light);
+      color: var(--brand-red);
+      font-weight: 700;
+      font-size: 0.68rem;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
 
     .criterios-chart {
       display: flex;
@@ -570,6 +645,8 @@
       .header-badge { display: none; }
     }
   </style>
+  <!-- Exportación de cada sección de nivel a PDF (descarga por nivel) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" defer></script>
 </head>
 <body>
   <header class="app-header">
@@ -973,10 +1050,10 @@ const NIVELES = [
 let lastRenderedData = null;
 
 /* data ahora es {cod_modular, nombre_ie, fecha_generacion, niveles: {...}}
- * -- una sección completa se genera por cada nivel presente en
- * data.niveles, en el orden fijo NIVEL_ORDEN (Inicial, Primaria,
- * Secundaria). Los niveles ausentes en esta IE simplemente no generan
- * bloque. */
+ * -- se genera una pestaña por cada nivel presente en data.niveles, en
+ * el orden fijo NIVEL_ORDEN (Inicial, Primaria, Secundaria). Solo se
+ * muestra un panel a la vez; los niveles ausentes en esta IE
+ * simplemente no generan pestaña. */
 function render(data) {
   lastRenderedData = data;
   el.contextName.textContent = `${data.nombre_ie || "—"} · cod. modular ${data.cod_modular || "—"}`;
@@ -995,28 +1072,66 @@ function render(data) {
     return;
   }
 
-  for (const nivelNombre of presentes) {
-    container.appendChild(renderNivelBlock(nivelNombre, niveles[nivelNombre]));
-  }
+  const tabs = document.createElement("div");
+  tabs.className = "nivel-tabs";
+  tabs.setAttribute("role", "tablist");
+
+  const panels = document.createElement("div");
+  panels.className = "nivel-panels";
+
+  presentes.forEach((nivelNombre, idx) => {
+    const tabBtn = document.createElement("button");
+    tabBtn.className = "nivel-tab-btn" + (idx === 0 ? " active" : "");
+    tabBtn.textContent = nivelNombre;
+    tabBtn.setAttribute("role", "tab");
+    tabBtn.setAttribute("aria-selected", idx === 0 ? "true" : "false");
+    tabBtn.id = `tab-${nivelNombre.toLowerCase()}`;
+    tabBtn.setAttribute("aria-controls", `panel-${nivelNombre.toLowerCase()}`);
+
+    const panel = renderNivelBlock(nivelNombre, niveles[nivelNombre]);
+    panel.className = "nivel-panel" + (idx === 0 ? " active" : "");
+    panel.id = `panel-${nivelNombre.toLowerCase()}`;
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", tabBtn.id);
+
+    tabBtn.addEventListener("click", () => {
+      tabs.querySelectorAll(".nivel-tab-btn").forEach((b) => {
+        b.classList.remove("active");
+        b.setAttribute("aria-selected", "false");
+      });
+      panels.querySelectorAll(".nivel-panel").forEach((p) => p.classList.remove("active"));
+      tabBtn.classList.add("active");
+      tabBtn.setAttribute("aria-selected", "true");
+      panel.classList.add("active");
+    });
+
+    tabs.appendChild(tabBtn);
+    panels.appendChild(panel);
+  });
+
+  container.append(tabs, panels);
 }
 
 /* Arma el bloque completo (stat-row, alertas, gráfico de criterios,
- * listas, texto narrativo) para UN nivel educativo. Cada sub-render
- * recibe el contenedor específico de este bloque, en vez de usar los
- * `el.algo` fijos de una sola sección global. */
+ * listas, texto narrativo, botón de descarga PDF) para UN nivel
+ * educativo. Cada sub-render recibe el contenedor específico de este
+ * bloque, en vez de usar los `el.algo` fijos de una sola sección global. */
 function renderNivelBlock(nivelNombre, nivelData) {
   const block = document.createElement("section");
   block.className = "nivel-block";
-  block.id = `nivel-${nivelNombre.toLowerCase()}`;
 
   const header = document.createElement("div");
-  header.className = "nivel-header";
+  header.className = "nivel-panel-header";
   const h2 = document.createElement("h2");
-  h2.textContent = nivelNombre;
-  const tag = document.createElement("span");
-  tag.className = "nivel-tag";
-  tag.textContent = "Nivel educativo";
-  header.append(h2, tag);
+  h2.textContent = `Nivel ${nivelNombre}`;
+  h2.style.margin = "0";
+  h2.style.fontSize = "1.15rem";
+
+  const btnDescargar = document.createElement("button");
+  btnDescargar.className = "btn-secondary btn-descargar-pdf";
+  btnDescargar.innerHTML = `<span aria-hidden="true">⬇</span> Descargar PDF`;
+
+  header.append(h2, btnDescargar);
   block.appendChild(header);
 
   const statRow = document.createElement("section");
@@ -1058,10 +1173,13 @@ function renderNivelBlock(nivelNombre, nivelData) {
   const table = document.createElement("table");
   table.className = "data-table";
   tableWrap.appendChild(table);
-  cardCriterios.append(headerCriterios, legend, chart, tableWrap);
+  const criteriosLegend = document.createElement("div");
+  criteriosLegend.className = "criterios-legend";
+  cardCriterios.append(headerCriterios, legend, chart, tableWrap, criteriosLegend);
   renderLegend(legend);
   renderCriteriosChart(chart, nivelData.distribucion_por_criterio || []);
   renderCriteriosTable(table, nivelData.distribucion_por_criterio || []);
+  renderCriteriosLegend(criteriosLegend);
   toggleBtn.addEventListener("click", () => {
     const showingTable = !tableWrap.hidden;
     tableWrap.hidden = showingTable;
@@ -1111,7 +1229,46 @@ function renderNivelBlock(nivelNombre, nivelData) {
   cardTexto.append(h2Texto, textoDiv);
   block.appendChild(cardTexto);
 
+  btnDescargar.addEventListener("click", () => {
+    descargarNivelComoPDF(block, nivelNombre, btnDescargar);
+  });
+
   return block;
+}
+
+/* Exporta el bloque completo de un nivel (stat-row, alertas, gráfico,
+ * listas, texto narrativo) a PDF usando html2pdf.js, cargada vía CDN
+ * con `defer` en <head>. Excluye el propio botón de descarga del PDF
+ * generado (se oculta temporalmente durante la captura). */
+function descargarNivelComoPDF(blockEl, nivelNombre, btnEl) {
+  if (typeof html2pdf === "undefined") {
+    console.error("html2pdf.js no cargó todavía; reintenta en un momento.");
+    return;
+  }
+
+  const nombreArchivo = `reporte_${(lastRenderedData?.nombre_ie || "IE").replace(/[^\w]+/g, "_")}_${nivelNombre}.pdf`;
+
+  const textoOriginal = btnEl.textContent;
+  btnEl.disabled = true;
+  btnEl.textContent = "Generando PDF…";
+  btnEl.style.visibility = "hidden"; // no aparece en la captura del PDF
+
+  html2pdf()
+    .set({
+      margin: 10,
+      filename: nombreArchivo,
+      image: { type: "jpeg", quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+      pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+    })
+    .from(blockEl)
+    .save()
+    .finally(() => {
+      btnEl.disabled = false;
+      btnEl.textContent = textoOriginal;
+      btnEl.style.visibility = "visible";
+    });
 }
 
 function statTile(label, value, opts = {}) {
@@ -1164,14 +1321,6 @@ function renderStatRow(container, data) {
       })
     : "—";
   container.appendChild(statTile("Última actualización", fecha, { small: true }));
-
-  container.appendChild(
-    statTile("Muestra", data.muestra_insuficiente ? "Referencial" : "Suficiente", {
-      badge: data.muestra_insuficiente
-        ? { tone: "critical", text: "no concluyente, < 5 docentes" }
-        : { tone: "good", text: "ok" },
-    })
-  );
 }
 
 /* ---------------------------------------------------------------------
@@ -1303,6 +1452,34 @@ function renderLegend(legendEl) {
 
     item.append(swatch, label);
     legendEl.appendChild(item);
+  }
+}
+
+/* Referencia de los 5 criterios (C1-C5) evaluados en la Sesión de
+ * aprendizaje V1 -- debe coincidir con core.CRITERIOS del backend.
+ * Mismo texto por nivel: los criterios son los mismos sin importar
+ * si la sección es de Inicial, Primaria o Secundaria. */
+const CRITERIOS = [
+  { id: "C1", nombre: "Coherencia propósito–desafíos", que_evalua: "Que la sesión responda a los desafíos identificados en el diagnóstico previo (MPE/ENLA/evidencias de aula), no a un formato genérico." },
+  { id: "C2", nombre: "Situación significativa", que_evalua: "Que la situación de aprendizaje esté orientada al desarrollo de competencias y pensamiento crítico, no solo a completar actividades." },
+  { id: "C3", nombre: "Demanda cognitiva de las actividades", que_evalua: "Que las actividades propuestas exijan análisis, toma de decisiones o argumentación, no solo participación." },
+  { id: "C4", nombre: "Mediación y evaluación formativa", que_evalua: "Que las estrategias de mediación y los criterios de evaluación formativa sean coherentes entre sí y con el propósito." },
+  { id: "C5", nombre: "Uso pertinente de recursos y espacios", que_evalua: "Que los recursos y espacios educativos elegidos respondan a una decisión pedagógica, no a disponibilidad." },
+];
+
+function renderCriteriosLegend(container) {
+  container.replaceChildren();
+  for (const c of CRITERIOS) {
+    const chip = document.createElement("span");
+    chip.className = "criterio-legend-chip";
+    chip.title = `Criterio ${c.id.slice(1)} (${c.id}): Evalúa ${c.que_evalua.charAt(0).toLowerCase() + c.que_evalua.slice(1)}`;
+
+    const idSpan = document.createElement("span");
+    idSpan.className = "criterio-legend-id";
+    idSpan.textContent = c.id;
+
+    chip.append(idSpan, document.createTextNode(c.nombre));
+    container.appendChild(chip);
   }
 }
 
