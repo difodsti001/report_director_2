@@ -238,6 +238,39 @@
       margin-bottom: 8px;
     }
 
+    /* ---------------------------------------------------------------------
+     * Secciones por nivel educativo (Inicial / Primaria / Secundaria),
+     * apiladas verticalmente en el mismo orden -- ver NIVEL_ORDEN en JS.
+     * ------------------------------------------------------------------- */
+    .nivel-block {
+      margin-bottom: 40px;
+      padding-top: 8px;
+    }
+    .nivel-block + .nivel-block {
+      border-top: 2px solid var(--gridline);
+      padding-top: 32px;
+    }
+    .nivel-header {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .nivel-header h2 {
+      font-size: 1.15rem;
+      margin: 0;
+    }
+    .nivel-header .nivel-tag {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      background: var(--gridline);
+      border-radius: 4px;
+      padding: 2px 8px;
+    }
+
     /* Estados de pantalla completa: acceso inválido / primera vez */
     .state-card {
       background: var(--surface-1);
@@ -604,47 +637,11 @@
     </section>
 
     <main id="report-content" hidden>
-      <section class="stat-row" id="stat-row"></section>
-
-      <section class="card" id="card-alertas">
-        <h2>Alertas institucionales</h2>
-        <div class="subtitle" style="margin-bottom: 10px;">
-          Puntos que requieren tu atención antes de la RTC 1. Cada alerta incluye una acción sugerida para el análisis con tus docentes.
-        </div>
-        <ul id="lista-alertas" class="alert-list"></ul>
-      </section>
-
-      <section class="card">
-        <div class="card-header">
-          <h2>Distribución por criterio</h2>
-          <button id="toggle-table" class="btn-ghost btn-sm">Ver como tabla</button>
-        </div>
-        <div class="legend" id="legend"></div>
-        <div id="criterios-chart" class="criterios-chart"></div>
-        <div id="criterios-table-wrap" hidden>
-          <table class="data-table" id="criterios-table"></table>
-        </div>
-      </section>
-
-      <section class="cards-grid">
-        <div class="card">
-          <h2><span class="status-icon good">&#10003;</span> Fortalezas predominantes</h2>
-          <ul id="lista-fortalezas" class="chip-list"></ul>
-        </div>
-        <div class="card">
-          <h2><span class="status-icon warning">!</span> Oportunidades de mejora</h2>
-          <ul id="lista-oportunidades" class="chip-list"></ul>
-        </div>
-        <div class="card">
-          <h2><span class="status-icon critical">&#10005;</span> Desafíos prioritarios</h2>
-          <ul id="lista-desafios" class="chip-list"></ul>
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>Reporte narrativo</h2>
-        <div id="texto-reporte" class="texto-reporte"></div>
-      </section>
+      <!-- Una sección completa por cada nivel educativo presente
+           (Inicial, Primaria, Secundaria), apiladas verticalmente.
+           Generadas dinámicamente por renderNiveles() en JS -- ver
+           NIVEL_TEMPLATE más abajo. -->
+      <div id="niveles-container"></div>
     </main>
   </div>
 
@@ -712,17 +709,7 @@ const el = {
   statusBanner: document.getElementById("status-banner"),
   loading: document.getElementById("loading"),
   reportContent: document.getElementById("report-content"),
-  statRow: document.getElementById("stat-row"),
-  legend: document.getElementById("legend"),
-  criteriosChart: document.getElementById("criterios-chart"),
-  criteriosTableWrap: document.getElementById("criterios-table-wrap"),
-  criteriosTable: document.getElementById("criterios-table"),
-  toggleTable: document.getElementById("toggle-table"),
-  listaFortalezas: document.getElementById("lista-fortalezas"),
-  listaOportunidades: document.getElementById("lista-oportunidades"),
-  listaDesafios: document.getElementById("lista-desafios"),
-  listaAlertas: document.getElementById("lista-alertas"),
-  textoReporte: document.getElementById("texto-reporte"),
+  nivelesContainer: document.getElementById("niveles-container"),
   tooltip: document.getElementById("tooltip"),
   themeToggle: document.getElementById("theme-toggle"),
 };
@@ -971,6 +958,12 @@ init();
 /* ---------------------------------------------------------------------
  * Render
  * ------------------------------------------------------------------- */
+/* Orden de despliegue de los niveles -- debe coincidir con
+ * core.NIVELES_EDUCATIVOS del backend (Inicial, Primaria, Secundaria).
+ * Solo se muestran los niveles que realmente vienen en data.niveles --
+ * una IE puede tener 1, 2 o 3. */
+const NIVEL_ORDEN = ["Inicial", "Primaria", "Secundaria"];
+
 const NIVELES = [
   { key: "pct_inicial", label: "Inicial", cls: "seg-inicio", swatch: "var(--status-critical)" },
   { key: "pct_en_proceso", label: "En proceso", cls: "seg-proceso", swatch: "var(--status-warning)" },
@@ -979,17 +972,146 @@ const NIVELES = [
 
 let lastRenderedData = null;
 
+/* data ahora es {cod_modular, nombre_ie, fecha_generacion, niveles: {...}}
+ * -- una sección completa se genera por cada nivel presente en
+ * data.niveles, en el orden fijo NIVEL_ORDEN (Inicial, Primaria,
+ * Secundaria). Los niveles ausentes en esta IE simplemente no generan
+ * bloque. */
 function render(data) {
   lastRenderedData = data;
   el.contextName.textContent = `${data.nombre_ie || "—"} · cod. modular ${data.cod_modular || "—"}`;
 
-  renderStatRow(data);
-  renderAlertas(data);
-  renderLegend();
-  renderCriteriosChart(data.distribucion_por_criterio || []);
-  renderCriteriosTable(data.distribucion_por_criterio || []);
-  renderListas(data);
-  el.textoReporte.textContent = data.texto_reporte || "";
+  const container = document.getElementById("niveles-container");
+  container.replaceChildren();
+
+  const niveles = data.niveles || {};
+  const presentes = NIVEL_ORDEN.filter((n) => niveles[n]);
+
+  if (presentes.length === 0) {
+    const p = document.createElement("p");
+    p.className = "empty-note";
+    p.textContent = "No hay secciones de nivel educativo disponibles para esta IE.";
+    container.appendChild(p);
+    return;
+  }
+
+  for (const nivelNombre of presentes) {
+    container.appendChild(renderNivelBlock(nivelNombre, niveles[nivelNombre]));
+  }
+}
+
+/* Arma el bloque completo (stat-row, alertas, gráfico de criterios,
+ * listas, texto narrativo) para UN nivel educativo. Cada sub-render
+ * recibe el contenedor específico de este bloque, en vez de usar los
+ * `el.algo` fijos de una sola sección global. */
+function renderNivelBlock(nivelNombre, nivelData) {
+  const block = document.createElement("section");
+  block.className = "nivel-block";
+  block.id = `nivel-${nivelNombre.toLowerCase()}`;
+
+  const header = document.createElement("div");
+  header.className = "nivel-header";
+  const h2 = document.createElement("h2");
+  h2.textContent = nivelNombre;
+  const tag = document.createElement("span");
+  tag.className = "nivel-tag";
+  tag.textContent = "Nivel educativo";
+  header.append(h2, tag);
+  block.appendChild(header);
+
+  const statRow = document.createElement("section");
+  statRow.className = "stat-row";
+  renderStatRow(statRow, nivelData);
+  block.appendChild(statRow);
+
+  const cardAlertas = document.createElement("section");
+  cardAlertas.className = "card";
+  const h2Alertas = document.createElement("h2");
+  h2Alertas.textContent = "Alertas institucionales";
+  const subAlertas = document.createElement("div");
+  subAlertas.className = "subtitle";
+  subAlertas.style.marginBottom = "10px";
+  subAlertas.textContent =
+    "Puntos que requieren tu atención antes de la RTC 1. Cada alerta incluye una acción sugerida para el análisis con tus docentes.";
+  const listaAlertas = document.createElement("ul");
+  listaAlertas.className = "alert-list";
+  cardAlertas.append(h2Alertas, subAlertas, listaAlertas);
+  renderAlertas(listaAlertas, nivelData);
+  block.appendChild(cardAlertas);
+
+  const cardCriterios = document.createElement("section");
+  cardCriterios.className = "card";
+  const headerCriterios = document.createElement("div");
+  headerCriterios.className = "card-header";
+  const h2Criterios = document.createElement("h2");
+  h2Criterios.textContent = "Distribución por criterio";
+  const toggleBtn = document.createElement("button");
+  toggleBtn.className = "btn-ghost btn-sm";
+  toggleBtn.textContent = "Ver como tabla";
+  headerCriterios.append(h2Criterios, toggleBtn);
+  const legend = document.createElement("div");
+  legend.className = "legend";
+  const chart = document.createElement("div");
+  chart.className = "criterios-chart";
+  const tableWrap = document.createElement("div");
+  tableWrap.hidden = true;
+  const table = document.createElement("table");
+  table.className = "data-table";
+  tableWrap.appendChild(table);
+  cardCriterios.append(headerCriterios, legend, chart, tableWrap);
+  renderLegend(legend);
+  renderCriteriosChart(chart, nivelData.distribucion_por_criterio || []);
+  renderCriteriosTable(table, nivelData.distribucion_por_criterio || []);
+  toggleBtn.addEventListener("click", () => {
+    const showingTable = !tableWrap.hidden;
+    tableWrap.hidden = showingTable;
+    chart.hidden = !showingTable;
+    legend.hidden = !showingTable;
+    toggleBtn.textContent = showingTable ? "Ver como tabla" : "Ver como gráfico";
+  });
+  block.appendChild(cardCriterios);
+
+  const cardsGrid = document.createElement("section");
+  cardsGrid.className = "cards-grid";
+
+  const cardFortalezas = document.createElement("div");
+  cardFortalezas.className = "card";
+  cardFortalezas.innerHTML = `<h2><span class="status-icon good">&#10003;</span> Fortalezas predominantes</h2>`;
+  const listaFortalezas = document.createElement("ul");
+  listaFortalezas.className = "chip-list";
+  cardFortalezas.appendChild(listaFortalezas);
+  renderListaSimple(listaFortalezas, nivelData.fortalezas_predominantes);
+
+  const cardOportunidades = document.createElement("div");
+  cardOportunidades.className = "card";
+  cardOportunidades.innerHTML = `<h2><span class="status-icon warning">!</span> Oportunidades de mejora</h2>`;
+  const listaOportunidades = document.createElement("ul");
+  listaOportunidades.className = "chip-list";
+  cardOportunidades.appendChild(listaOportunidades);
+  renderListaSimple(listaOportunidades, nivelData.oportunidades_comunes);
+
+  const cardDesafios = document.createElement("div");
+  cardDesafios.className = "card";
+  cardDesafios.innerHTML = `<h2><span class="status-icon critical">&#10005;</span> Desafíos prioritarios</h2>`;
+  const listaDesafios = document.createElement("ul");
+  listaDesafios.className = "chip-list";
+  cardDesafios.appendChild(listaDesafios);
+  renderListaDesafios(listaDesafios, nivelData.desafios_prioritarios);
+
+  cardsGrid.append(cardFortalezas, cardOportunidades, cardDesafios);
+  block.appendChild(cardsGrid);
+
+  const cardTexto = document.createElement("section");
+  cardTexto.className = "card";
+  const h2Texto = document.createElement("h2");
+  h2Texto.textContent = "Reporte narrativo";
+  const textoDiv = document.createElement("div");
+  textoDiv.className = "texto-reporte";
+  textoDiv.textContent = nivelData.texto_reporte || "";
+  cardTexto.append(h2Texto, textoDiv);
+  block.appendChild(cardTexto);
+
+  return block;
 }
 
 function statTile(label, value, opts = {}) {
@@ -1016,14 +1138,14 @@ function statTile(label, value, opts = {}) {
   return tile;
 }
 
-function renderStatRow(data) {
-  el.statRow.replaceChildren();
+function renderStatRow(container, data) {
+  container.replaceChildren();
 
-  el.statRow.appendChild(statTile("Docentes retroalimentados", data.n_docentes_evaluados ?? "—"));
-  el.statRow.appendChild(statTile("Docentes totales", data.n_docentes_total ?? "—"));
+  container.appendChild(statTile("Docentes retroalimentados", data.n_docentes_evaluados ?? "—"));
+  container.appendChild(statTile("Docentes totales", data.n_docentes_total ?? "—"));
 
   const pctCobertura = data.pct_cobertura ?? 0;
-  el.statRow.appendChild(
+  container.appendChild(
     statTile("Cobertura", `${pctCobertura}%`, {
       badge:
         pctCobertura < 70
@@ -1041,9 +1163,9 @@ function renderStatRow(data) {
         minute: "2-digit",
       })
     : "—";
-  el.statRow.appendChild(statTile("Última actualización", fecha, { small: true }));
+  container.appendChild(statTile("Última actualización", fecha, { small: true }));
 
-  el.statRow.appendChild(
+  container.appendChild(
     statTile("Muestra", data.muestra_insuficiente ? "Referencial" : "Suficiente", {
       badge: data.muestra_insuficiente
         ? { tone: "critical", text: "no concluyente, < 5 docentes" }
@@ -1109,8 +1231,8 @@ function computeAlertas(data) {
 
 const STATUS_ICON_GLYPH = { good: "✓", warning: "!", critical: "✕" };
 
-function renderAlertas(data) {
-  el.listaAlertas.replaceChildren();
+function renderAlertas(listaEl, data) {
+  listaEl.replaceChildren();
   const alertas = computeAlertas(data);
 
   if (alertas.length === 0) {
@@ -1129,7 +1251,7 @@ function renderAlertas(data) {
     body.appendChild(title);
 
     li.append(icon, body);
-    el.listaAlertas.appendChild(li);
+    listaEl.appendChild(li);
     return;
   }
 
@@ -1162,12 +1284,12 @@ function renderAlertas(data) {
 
     body.append(title, detail, accion, modalidad);
     li.append(icon, body);
-    el.listaAlertas.appendChild(li);
+    listaEl.appendChild(li);
   }
 }
 
-function renderLegend() {
-  el.legend.replaceChildren();
+function renderLegend(legendEl) {
+  legendEl.replaceChildren();
   for (const nivel of NIVELES) {
     const item = document.createElement("div");
     item.className = "legend-item";
@@ -1180,12 +1302,12 @@ function renderLegend() {
     label.textContent = nivel.label;
 
     item.append(swatch, label);
-    el.legend.appendChild(item);
+    legendEl.appendChild(item);
   }
 }
 
-function renderCriteriosChart(criterios) {
-  el.criteriosChart.replaceChildren();
+function renderCriteriosChart(chartEl, criterios) {
+  chartEl.replaceChildren();
 
   for (const c of criterios) {
     const row = document.createElement("div");
@@ -1223,12 +1345,11 @@ function renderCriteriosChart(criterios) {
     value.textContent = `${c.pct_logrado ?? 0}%`;
 
     row.append(label, bar, value);
-    el.criteriosChart.appendChild(row);
+    chartEl.appendChild(row);
   }
 }
 
-function renderCriteriosTable(criterios) {
-  const table = el.criteriosTable;
+function renderCriteriosTable(table, criterios) {
   table.replaceChildren();
 
   const thead = document.createElement("thead");
@@ -1254,13 +1375,8 @@ function renderCriteriosTable(criterios) {
   table.append(thead, tbody);
 }
 
-el.toggleTable.addEventListener("click", () => {
-  const showingTable = !el.criteriosTableWrap.hidden;
-  el.criteriosTableWrap.hidden = showingTable;
-  el.criteriosChart.hidden = !showingTable;
-  el.legend.hidden = !showingTable;
-  el.toggleTable.textContent = showingTable ? "Ver como tabla" : "Ver como gráfico";
-});
+/* El toggle tabla/gráfico ahora se agrega dinámicamente por cada bloque
+ * de nivel dentro de renderNivelBlock() -- no hay un único botón fijo. */
 
 function renderListaSimple(container, items) {
   container.replaceChildren();
@@ -1283,30 +1399,27 @@ function renderListaSimple(container, items) {
   }
 }
 
-function renderListas(data) {
-  renderListaSimple(el.listaFortalezas, data.fortalezas_predominantes);
-  renderListaSimple(el.listaOportunidades, data.oportunidades_comunes);
-
-  el.listaDesafios.replaceChildren();
-  const desafios = data.desafios_prioritarios || [];
+function renderListaDesafios(container, desafios) {
+  container.replaceChildren();
+  desafios = desafios || [];
   if (desafios.length === 0) {
     const li = document.createElement("li");
     li.className = "empty-note";
     li.textContent = "Sin desafíos prioritarios identificados.";
-    el.listaDesafios.appendChild(li);
-  } else {
-    for (const d of desafios) {
-      const li = document.createElement("li");
-      if (d.tipo === "brecha" && d.pct >= 50) li.title = "Brecha extendida (≥ 50%): ver panel de alertas";
-      const idSpan = document.createElement("span");
-      idSpan.textContent = d.tipo === "brecha" ? `Brecha ${d.id}` : `Criterio ${d.id}`;
-      const pctSpan = document.createElement("span");
-      pctSpan.className = "pct";
-      if (d.tipo === "brecha" && d.pct >= 50) pctSpan.style.color = "var(--status-critical)";
-      pctSpan.textContent = `${d.pct}%`;
-      li.append(idSpan, pctSpan);
-      el.listaDesafios.appendChild(li);
-    }
+    container.appendChild(li);
+    return;
+  }
+  for (const d of desafios) {
+    const li = document.createElement("li");
+    if (d.tipo === "brecha" && d.pct >= 50) li.title = "Brecha extendida (≥ 50%): ver panel de alertas";
+    const idSpan = document.createElement("span");
+    idSpan.textContent = d.tipo === "brecha" ? `Brecha ${d.id}` : `Criterio ${d.id}`;
+    const pctSpan = document.createElement("span");
+    pctSpan.className = "pct";
+    if (d.tipo === "brecha" && d.pct >= 50) pctSpan.style.color = "var(--status-critical)";
+    pctSpan.textContent = `${d.pct}%`;
+    li.append(idSpan, pctSpan);
+    container.appendChild(li);
   }
 }
 

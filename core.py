@@ -253,7 +253,7 @@ CARGOS_DOCENTE = ("DOCENTE", "JERARQUICO")
 # Prioridad de las brechas (crítica>estructural>de ajuste) y de niveles (inicio>en_proceso)
 PRIORIDAD_TIPO = {"Crítica": 3, "Estructural": 2, "De ajuste": 1}
 PRIORIDAD_NIVEL = {"inicio": 2, "en_proceso": 1}
-NIVELES_EDUCATIVOS = ("Secundaria", "Primaria", "Inicial")
+NIVELES_EDUCATIVOS = ("Inicial", "Primaria", "Secundaria")
 
 UMBRAL_FORTALEZA_PCT_LOGRADO = 60
 UMBRAL_OPORTUNIDAD_PCT_EN_PROCESO = 50
