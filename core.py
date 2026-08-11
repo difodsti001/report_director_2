@@ -171,21 +171,7 @@ async def _asegurar_schema_cache() -> None:
 # =============================================================================
 # Configuración de negocio
 # =============================================================================
-# Filtro compuesto de IE: no existe una columna única con el identificador
-# de institución, se arma a partir de 3 columnas presentes en AMBAS
-# tablas (base_ebr_IA y vw_processing_brechas_ebr). Se comparan por
-# separado en el WHERE (AND), no concatenadas con CONCAT()/|| -- así
-# Postgres puede usar índices existentes sobre estas columnas en vez de
-# forzar un escaneo completo por cada fila.
-#
-# "región" lleva tilde tal cual en la base -- con comillas dobles en el
-# SQL para que Postgres la resuelva exacta.
 COLUMNAS_FILTRO_IE = ("nombre_ie", '"región"', "distrito")
-
-# Separador para armar la clave compuesta que identifica a la IE en el
-# caché (f4_reportes_directivo, f4_consultas_directivo) y en los logs --
-# ahí sí se necesita un solo string, porque esas tablas tienen una sola
-# columna cod_modular/clave_ie, no 3 columnas separadas.
 _SEPARADOR_CLAVE_IE = "|"
 
 
@@ -196,8 +182,7 @@ def _armar_clave_ie(nombre_ie: str, region: str, distrito: str) -> str:
 
 
 # =============================================================================
-# Referencia de criterios y brechas -- usados para enriquecer el prompt
-# del LLM con nombres reales en vez de solo "C1", "C4", etc.
+# Referencia de criterios y brechas
 # =============================================================================
 
 CRITERIOS: dict[str, dict[str, str]] = {
@@ -263,20 +248,13 @@ def _nombre_brecha(brecha_id: str) -> str:
     info = BRECHAS.get(brecha_id)
     return f"{brecha_id} ({info['nombre']})" if info else brecha_id
 
-
-# Cargos que cuentan como "docente" en base_ebr_IA para pct_cobertura.
-# La comparación en SQL se hace con UPPER() en ambos lados (ver
-# contar_docentes_total) para no depender del casing exacto que traiga
-# la columna real -- se confirmó que viene en mayúsculas ("DOCENTE",
-# "DIRECTIVO", "JERARQUICO" o similar), pero no asumimos que siempre
-# será consistente.
 CARGOS_DOCENTE = ("DOCENTE", "JERARQUICO")
 
 # Prioridad de las brechas (crítica>estructural>de ajuste) y de niveles (inicio>en_proceso)
 PRIORIDAD_TIPO = {"Crítica": 3, "Estructural": 2, "De ajuste": 1}
 PRIORIDAD_NIVEL = {"inicio": 2, "en_proceso": 1}
+NIVELES_EDUCATIVOS = ("Inicial", "Primaria", "Secundaria")
 
-# Umbrales de clasificación institucional
 UMBRAL_FORTALEZA_PCT_LOGRADO = 60
 UMBRAL_OPORTUNIDAD_PCT_EN_PROCESO = 50
 UMBRAL_DESAFIO_PCT_INICIAL = 40
@@ -368,11 +346,13 @@ async def resolver_cod_modular(userid: int) -> dict:
     }
 
 
-async def contar_docentes_total(nombre_ie: str, region: str, distrito: str) -> int:
+async def contar_docentes_total(nombre_ie: str, region: str, distrito: str, nivel_educativo: Optional[str] = None) -> int:
     """Cuenta docentes+jerárquicos en base_ebr_IA para esta IE, filtrando
     por las 3 columnas del filtro compuesto (nombre_ie, región, distrito)
     por separado -- no concatenadas -- para que Postgres pueda usar
-    índices existentes sobre esas columnas."""
+    índices existentes sobre esas columnas. Si se pasa nivel_educativo,
+    filtra además por ese nivel (Secundaria/Primaria/Inicial); si es
+    None, cuenta los 3 niveles juntos."""
     query = """
         SELECT COUNT(*) AS total
         FROM public."base_ebr_IA"
@@ -380,6 +360,7 @@ async def contar_docentes_total(nombre_ie: str, region: str, distrito: str) -> i
           AND "región" = %(region)s
           AND distrito IS NOT DISTINCT FROM %(distrito)s
           AND UPPER(cargo) = ANY(%(cargos)s)
+          AND (%(nivel_educativo)s::text IS NULL OR nivel_educativo = %(nivel_educativo)s::text)
     """
     async with pool_datos.connection() as conn:
         row = await (await conn.execute(
@@ -389,15 +370,18 @@ async def contar_docentes_total(nombre_ie: str, region: str, distrito: str) -> i
                 "region": region,
                 "distrito": distrito,
                 "cargos": list(CARGOS_DOCENTE),
+                "nivel_educativo": nivel_educativo,
             },
         )).fetchone()
 
     return row["total"] if row else 0
 
 
-async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str) -> list[dict]:
+async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str, nivel_educativo: Optional[str] = None) -> list[dict]:
     """Trae todas las filas, solo con evidencias con status = 'success'.
-    Filtro compuesto por las 3 columnas, igual que en base_ebr_IA."""
+    Filtro compuesto por las 3 columnas, igual que en base_ebr_IA. Si se
+    pasa nivel_educativo, filtra además por ese nivel; si es None, trae
+    los 3 niveles juntos."""
     cmids_validos = _cmids_docentes_configurados()
 
     if not cmids_validos:
@@ -414,6 +398,7 @@ async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str) -> lis
           AND distrito IS NOT DISTINCT FROM %(distrito)s
           AND cmid = ANY(%(cmids_validos)s)
           AND status = 'success'
+          AND (%(nivel_educativo)s::text IS NULL OR nivel_educativo = %(nivel_educativo)s::text)
         ORDER BY user_id, criterion_index
     """
     async with pool_datos.connection() as conn:
@@ -424,20 +409,60 @@ async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str) -> lis
                 "region": region,
                 "distrito": distrito,
                 "cmids_validos": cmids_validos,
+                "nivel_educativo": nivel_educativo,
             },
         )).fetchall()
 
-    log.info("filas_vista_obtenidas", nombre_ie=nombre_ie, region=region, distrito=distrito, n_filas=len(rows))
+    log.info(
+        "filas_vista_obtenidas",
+        nombre_ie=nombre_ie, region=region, distrito=distrito,
+        nivel_educativo=nivel_educativo, n_filas=len(rows),
+    )
     return rows
 
 
-async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str) -> int:
+async def resolver_niveles_presentes(nombre_ie: str, region: str, distrito: str) -> list[str]:
+    """
+    Detecta qué niveles educativos (de NIVELES_EDUCATIVOS) tienen al
+    menos una evidencia 'success' para esta IE. Una IE puede tener 1, 2
+    o 3 niveles -- el reporte solo genera secciones para los presentes.
+    """
+    cmids_validos = _cmids_docentes_configurados()
+    if not cmids_validos:
+        return []
+
+    query = """
+        SELECT DISTINCT nivel_educativo
+        FROM public.vw_processing_brechas_ebr
+        WHERE nombre_ie = %(nombre_ie)s
+          AND "región" = %(region)s
+          AND distrito IS NOT DISTINCT FROM %(distrito)s
+          AND cmid = ANY(%(cmids_validos)s)
+          AND status = 'success'
+    """
+    async with pool_datos.connection() as conn:
+        rows = await (await conn.execute(
+            query,
+            {"nombre_ie": nombre_ie, "region": region, "distrito": distrito, "cmids_validos": cmids_validos},
+        )).fetchall()
+
+    presentes = {r["nivel_educativo"] for r in rows}
+    # Se retorna en el orden fijo de NIVELES_EDUCATIVOS, no el orden de
+    # la base, para que el reporte siempre liste los niveles en el mismo
+    # orden consistente (Secundaria, Primaria, Inicial).
+    return [n for n in NIVELES_EDUCATIVOS if n in presentes]
+
+
+async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str, nivel_educativo: Optional[str] = None) -> int:
     """
     Cuenta cuántos docentes DISTINTOS tienen al menos una evidencia
     'success' para esta IE, sin traer las filas completas. Más liviana
     que obtener_filas_vista + agrupar_por_docente -- usada por el
     endpoint de consulta (que debe ser rápido) para decidir la acción
-    sin pagar el costo de traer todo el detalle por criterio.
+    sin pagar el costo de traer todo el detalle por criterio. Si
+    nivel_educativo es None, cuenta los 3 niveles juntos (usado para el
+    mínimo de activación de UMBRAL_MUESTRA_INSUFICIENTE sobre la IE
+    completa).
     """
     cmids_validos = _cmids_docentes_configurados()
     if not cmids_validos:
@@ -451,6 +476,7 @@ async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str) 
           AND distrito IS NOT DISTINCT FROM %(distrito)s
           AND cmid = ANY(%(cmids_validos)s)
           AND status = 'success'
+          AND (%(nivel_educativo)s::text IS NULL OR nivel_educativo = %(nivel_educativo)s::text)
     """
     async with pool_datos.connection() as conn:
         row = await (await conn.execute(
@@ -460,6 +486,7 @@ async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str) 
                 "region": region,
                 "distrito": distrito,
                 "cmids_validos": cmids_validos,
+                "nivel_educativo": nivel_educativo,
             },
         )).fetchone()
 
@@ -635,11 +662,17 @@ sistema educativo peruano, en español, tono institucional orientado a la
 toma de decisiones colegiadas. No nombres ni des pistas sobre ningún
 docente individual: todas las cifras son agregadas.
 
+Este texto corresponde específicamente al nivel educativo {v.get('nivel_educativo')}
+de la institución (la IE puede tener otros niveles con sus propios
+reportes separados) -- las cifras de docentes totales, evaluados y
+cobertura son SOLO de este nivel, no de la IE completa.
+
 Datos generales (para el Resumen ejecutivo):
 - IE: {v.get('nombre_ie')}
-- Docentes totales registrados: {v.get('n_docentes_total')}
-- Docentes evaluados: {v.get('n_docentes_evaluados')}
-- Cobertura: {v.get('pct_cobertura')}%
+- Nivel educativo: {v.get('nivel_educativo')}
+- Docentes totales registrados (en este nivel): {v.get('n_docentes_total')}
+- Docentes evaluados (en este nivel): {v.get('n_docentes_evaluados')}
+- Cobertura (de este nivel): {v.get('pct_cobertura')}%
 - Muestra insuficiente: {v.get('muestra_insuficiente')}
 
 Fortalezas predominantes:
@@ -657,11 +690,11 @@ sección, ni en negrita ni mencionados explícitamente como "Resumen
 ejecutivo:" o "Fortalezas predominantes:". El lector no debe ver
 etiquetas de sección, solo párrafos que fluyen naturalmente uno tras
 otro siguiendo este orden de contenido):
-1. Primer párrafo: cuántos docentes evaluados de cuántos totales, con
-   el porcentaje de cobertura, a modo de línea base institucional. Tipo
-   "Al cierre del plazo, [n_evaluados] de [n_total] docentes de la
-   institución entregaron su Sesión de aprendizaje con evidencia válida
-   ([pct_cobertura]% de cobertura)."
+1. Primer párrafo: cuántos docentes evaluados de cuántos totales EN ESTE
+   NIVEL, con el porcentaje de cobertura de este nivel, a modo de línea
+   base institucional. Tipo "Al cierre del plazo, [n_evaluados] de
+   [n_total] docentes del nivel [nivel_educativo] entregaron su Sesión
+   de aprendizaje con evidencia válida ([pct_cobertura]% de cobertura)."
 2. Siguiente párrafo: para cada fortaleza, una frase con el porcentaje
    y el nombre del criterio, indicando que sugiere una base
    institucional sólida en esa área.
@@ -737,38 +770,32 @@ async def redactar_texto_reporte(variables: dict) -> str:
 # Orquestador de generación
 # =============================================================================
 
-async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrito: str) -> dict:
+async def _generar_seccion_nivel(
+    cod_modular: str, nombre_ie: str, region: str, distrito: str, nivel_educativo: str
+) -> dict:
     """
-    cod_modular aquí es la CLAVE COMPUESTA (nombre_ie|región|distrito),
-    usada solo para logs y como identificador en el JSON de salida.
-    nombre_ie, region, distrito por separado son los que se usan en las
-    queries reales contra base_ebr_IA y vw_processing_brechas_ebr.
+    Corre el pipeline completo de análisis (reglas de negocio + LLM)
+    para UN nivel educativo específico de la IE. n_docentes_total y
+    pct_cobertura son relativos a ESTE nivel, no a la IE completa (cada
+    nivel se compara contra su propio total de docentes).
     """
-    filas = await obtener_filas_vista(nombre_ie, region, distrito)
-    if not filas:
-        raise SinDatosDisponiblesError(f"Sin datos en la vista para {cod_modular}")
-
+    filas = await obtener_filas_vista(nombre_ie, region, distrito, nivel_educativo)
     filas_por_docente = agrupar_por_docente(filas)
     n_docentes_evaluados = len(filas_por_docente)
 
-    n_docentes_total = await contar_docentes_total(nombre_ie, region, distrito)
+    n_docentes_total = await contar_docentes_total(nombre_ie, region, distrito, nivel_educativo)
     pct_cobertura = (
         round(100 * n_docentes_evaluados / n_docentes_total) if n_docentes_total > 0 else 0
     )
 
-    # Muestra insuficiente: menos de UMBRAL_MUESTRA_INSUFICIENTE docentes
-    # evaluados EN TÉRMINOS ABSOLUTOS, Y ADEMÁS cobertura incompleta. Si
-    # ya se evaluó al 100% de la plana docente de esta IE (por ejemplo,
-    # una IE con solo 3 docentes en total, los 3 evaluados), no hay
-    # "más muestra" posible -- nunca se marca como insuficiente sin
-    # importar el conteo absoluto.
     muestra_insuficiente = (
         n_docentes_evaluados < UMBRAL_MUESTRA_INSUFICIENTE and pct_cobertura < 100
     )
     if muestra_insuficiente:
         log.info(
-            "reporte_generado_muestra_insuficiente",
+            "seccion_generada_muestra_insuficiente",
             cod_modular=cod_modular,
+            nivel_educativo=nivel_educativo,
             n_docentes_evaluados=n_docentes_evaluados,
             pct_cobertura=pct_cobertura,
         )
@@ -786,6 +813,7 @@ async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrit
     variables = {
         "cod_modular": cod_modular,
         "nombre_ie": nombre_ie,
+        "nivel_educativo": nivel_educativo,
         "fecha_generacion": datetime.now().isoformat(),
         "n_docentes_total": n_docentes_total,
         "n_docentes_evaluados": n_docentes_evaluados,
@@ -798,6 +826,39 @@ async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrit
     }
     variables["texto_reporte"] = await redactar_texto_reporte(variables)
     return variables
+
+
+async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrito: str) -> dict:
+    """
+    cod_modular aquí es la CLAVE COMPUESTA (nombre_ie|región|distrito),
+    usada solo para logs y como identificador en el JSON de salida.
+    nombre_ie, region, distrito por separado son los que se usan en las
+    queries reales contra base_ebr_IA y vw_processing_brechas_ebr.
+
+    El reporte es por IE, pero con una sección independiente POR CADA
+    nivel educativo presente (Secundaria/Primaria/Inicial) -- una IE
+    puede tener 1, 2 o 3 niveles. Cada nivel corre su propio análisis
+    completo (reglas de negocio + llamada al LLM), comparando su propia
+    cobertura contra el total de docentes de ESE nivel únicamente.
+
+    Retorna {"cod_modular": ..., "nombre_ie": ..., "niveles": {"Primaria":
+    {...sección...}, "Secundaria": {...}}} -- solo con los niveles que
+    realmente tienen evidencia para esta IE.
+    """
+    niveles_presentes = await resolver_niveles_presentes(nombre_ie, region, distrito)
+    if not niveles_presentes:
+        raise SinDatosDisponiblesError(f"Sin datos en la vista para {cod_modular}")
+
+    secciones: dict[str, dict] = {}
+    for nivel in niveles_presentes:
+        secciones[nivel] = await _generar_seccion_nivel(cod_modular, nombre_ie, region, distrito, nivel)
+
+    return {
+        "cod_modular": cod_modular,
+        "nombre_ie": nombre_ie,
+        "fecha_generacion": datetime.now().isoformat(),
+        "niveles": secciones,
+    }
 
 
 # =============================================================================
@@ -889,17 +950,21 @@ async def consultar_reporte_existente(userid: int) -> dict:
     él mismo (nunca toca el LLM). Cuatro situaciones:
 
       1. No hay reporte, y ya hay >= UMBRAL_MUESTRA_INSUFICIENTE docentes
-         evaluados -> accion="generar" (el frontend llama a
-         POST /reporte/generar automáticamente, sin botón visible).
-      2. Hay reporte, y el número de docentes evaluados no cambió desde
-         que se generó -> accion="mostrar", reporte vigente tal cual.
-      3. Hay reporte, pero el número de docentes evaluados cambió ->
-         accion="generar" (el frontend dispara la regeneración).
-      4. No hay reporte, y aún no se llega al mínimo de docentes NI se
-         cubrió el 100% de la plana docente de la IE -> accion=
-         "esperar_docentes". Si una IE ya evaluó a TODOS sus docentes
-         (aunque sean menos de 5 en total), no tiene sentido esperar
-         más -- se genera igual, marcado como muestra_insuficiente.
+         evaluados SUMANDO LOS 3 NIVELES EDUCATIVOS -> accion="generar"
+         (el frontend llama a POST /reporte/generar automáticamente, sin
+         botón visible).
+      2. Hay reporte, y el número de docentes evaluados (suma de niveles)
+         no cambió desde que se generó -> accion="mostrar", reporte
+         vigente tal cual.
+      3. Hay reporte, pero el número de docentes evaluados (suma de
+         niveles) cambió -> accion="generar" (el frontend dispara la
+         regeneración).
+      4. No hay reporte, y aún no se llega al mínimo de docentes (suma
+         de niveles) NI se cubrió el 100% de la plana docente de la IE
+         completa -> accion="esperar_docentes". Si una IE ya evaluó a
+         TODOS sus docentes (aunque sean menos de 5 en total), no tiene
+         sentido esperar más -- se genera igual, marcado como
+         muestra_insuficiente en la(s) sección(es) que correspondan.
 
     Retorna siempre {"accion": ..., "reporte": ... | None, "n_docentes_evaluados": ...}
     """
@@ -910,6 +975,7 @@ async def consultar_reporte_existente(userid: int) -> dict:
     cod_modular = ie["cod_modular"]
 
     guardado = await obtener_reporte_guardado(cod_modular)
+
     n_actual = await contar_docentes_evaluados(ie["nombre_ie"], ie["region"], ie["distrito"])
     n_total = await contar_docentes_total(ie["nombre_ie"], ie["region"], ie["distrito"])
     pct_cobertura_actual = round(100 * n_actual / n_total) if n_total > 0 else 0
@@ -1005,14 +1071,11 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
         except SinDatosDisponiblesError:
             await guardar_estado_reporte(cod_modular, "sin_datos", 0)
             raise
-
-        # estado='generado' aunque el reporte tenga muestra_insuficiente=True
-        # -- se generó igual, solo va marcado como referencial en su
-        # propio campo. "muestra_insuficiente" como estado de
-        # f4_reportes_directivo queda reservado para cuando NO hay
-        # reporte en absoluto (ver consultar_reporte_existente).
+        n_docentes_evaluados_total = sum(
+            seccion["n_docentes_evaluados"] for seccion in reporte["niveles"].values()
+        )
         id_reporte = await guardar_estado_reporte(
-            cod_modular, "generado", reporte["n_docentes_evaluados"], reporte
+            cod_modular, "generado", n_docentes_evaluados_total, reporte
         )
 
     await registrar_consulta(cod_modular, userid, courseid, cmid, id_reporte)
