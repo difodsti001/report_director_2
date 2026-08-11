@@ -339,6 +339,11 @@
       border-radius: 12px;
       padding: 16px;
       margin-bottom: 16px;
+      /* Al exportar a PDF (pagebreak mode "css"), evita que una tarjeta
+         quede cortada entre dos páginas -- si no cabe entera, pasa
+         completa a la siguiente. No afecta la vista en pantalla. */
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
     .card h2 {
       font-size: 1rem;
@@ -385,9 +390,14 @@
       border-radius: 999px;
       margin-top: 6px;
     }
-    .badge.warning { background: color-mix(in srgb, var(--status-warning) 22%, transparent); color: var(--status-warning); }
-    .badge.good { background: color-mix(in srgb, var(--status-good) 18%, transparent); color: var(--status-good); }
-    .badge.critical { background: color-mix(in srgb, var(--status-critical) 18%, transparent); color: var(--status-critical); }
+    /* rgba() en vez de color-mix(): equivalente exacto al mezclar con
+       transparente, pero compatible con html2canvas (usado por
+       html2pdf.js para "Descargar PDF"), que no interpreta color-mix()
+       y hacía fallar la generación del PDF en las tarjetas de estado
+       (Cobertura, Muestra). */
+    .badge.warning { background: rgba(250, 178, 25, 0.22); color: var(--status-warning); }
+    .badge.good { background: rgba(12, 163, 12, 0.18); color: var(--status-good); }
+    .badge.critical { background: rgba(208, 59, 59, 0.18); color: var(--status-critical); }
 
     .purpose-banner {
       display: flex;
@@ -612,6 +622,27 @@
 
     .muted { color: var(--text-muted); }
 
+    /* Título institucional del PDF exportado -- se inserta dinámicamente
+       solo durante la descarga (ver descargarNivelComoPDF), nunca es
+       parte de la interfaz normal. */
+    .pdf-titulo {
+      margin: 0 0 16px;
+      padding-bottom: 14px;
+      border-bottom: 3px solid var(--brand-red);
+    }
+    .pdf-titulo h1 {
+      margin: 0 0 4px;
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      color: var(--brand-red);
+    }
+    .pdf-titulo p {
+      margin: 0;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
     /* ---------------------------------------------------------------------
      * Footer institucional
      * ------------------------------------------------------------------- */
@@ -645,8 +676,11 @@
       .header-badge { display: none; }
     }
   </style>
-  <!-- Exportación de cada sección de nivel a PDF (descarga por nivel) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" defer></script>
+  <!-- Exportación de cada sección de nivel a PDF (descarga por nivel).
+       Servida localmente (no desde un CDN externo) porque la red
+       institucional puede bloquear dominios externos -- ver el flag
+       DISABLE_SSL_VERIFY_DEV_ONLY en llm_client.py, mismo problema. -->
+  <script src="/static/html2pdf.bundle.min.js" defer></script>
 </head>
 <body>
   <header class="app-header">
@@ -1237,16 +1271,40 @@ function renderNivelBlock(nivelNombre, nivelData) {
 }
 
 /* Exporta el bloque completo de un nivel (stat-row, alertas, gráfico,
- * listas, texto narrativo) a PDF usando html2pdf.js, cargada vía CDN
- * con `defer` en <head>. Excluye el propio botón de descarga del PDF
- * generado (se oculta temporalmente durante la captura). */
+ * listas, texto narrativo) a PDF usando html2pdf.js, servida localmente
+ * desde /static (ver <head>).
+ *
+ * Captura blockEl directamente, tal como está visible en pantalla (no
+ * un clon en un contenedor fuera de pantalla): probamos esa ruta y con
+ * cualquier variante de posicionamiento extremo (fixed o absolute con
+ * left muy negativo) el PDF salía completamente en blanco -- muy
+ * probablemente porque html2canvas termina necesitando un lienzo
+ * interno gigante (desde esa posición hasta el contenido normal de la
+ * página) que excede el límite de tamaño de canvas del navegador. El
+ * botón de descarga se oculta (visibility, no display) durante la
+ * captura para que no aparezca en el PDF pero sin alterar el layout. */
 function descargarNivelComoPDF(blockEl, nivelNombre, btnEl) {
   if (typeof html2pdf === "undefined") {
-    console.error("html2pdf.js no cargó todavía; reintenta en un momento.");
+    console.error("html2pdf.js no cargó.");
+    alert(
+      "No se pudo generar el PDF porque no cargó el componente necesario. " +
+      "Verifica tu conexión y vuelve a intentarlo; si el problema persiste, avisa al equipo de TI."
+    );
     return;
   }
 
   const nombreArchivo = `reporte_${(lastRenderedData?.nombre_ie || "IE").replace(/[^\w]+/g, "_")}_${nivelNombre}.pdf`;
+
+  // Título institucional: se inserta en el bloque real solo mientras
+  // se genera el PDF y se quita apenas termina.
+  const titulo = document.createElement("div");
+  titulo.className = "pdf-titulo";
+  const tituloH1 = document.createElement("h1");
+  tituloH1.textContent = "REPORTE INSTITUCIONAL";
+  const tituloSub = document.createElement("p");
+  tituloSub.textContent = `${lastRenderedData?.nombre_ie || ""} · Nivel ${nivelNombre}`;
+  titulo.append(tituloH1, tituloSub);
+  blockEl.insertBefore(titulo, blockEl.firstChild);
 
   const textoOriginal = btnEl.textContent;
   btnEl.disabled = true;
@@ -1258,13 +1316,29 @@ function descargarNivelComoPDF(blockEl, nivelNombre, btnEl) {
       margin: 10,
       filename: nombreArchivo,
       image: { type: "jpeg", quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true },
+      // width/height explícitos = el tamaño exacto del bloque a
+      // capturar, para que html2canvas no tenga que adivinarlo (eso
+      // era lo que causaba el recorte del lado derecho).
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        width: blockEl.scrollWidth,
+        height: blockEl.scrollHeight,
+      },
       jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-      pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+      // Solo "css": respeta el page-break-inside:avoid de .card.
+      // Combinado con "legacy" dejaba un salto de espacio en blanco
+      // antes de la tarjeta empujada a la página siguiente.
+      pagebreak: { mode: ["css"] },
     })
     .from(blockEl)
     .save()
+    .catch((err) => {
+      console.error("Error generando el PDF:", err);
+      alert("No se pudo generar el PDF. Vuelve a intentarlo en unos segundos.");
+    })
     .finally(() => {
+      titulo.remove();
       btnEl.disabled = false;
       btnEl.textContent = textoOriginal;
       btnEl.style.visibility = "visible";
