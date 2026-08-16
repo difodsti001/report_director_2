@@ -24,6 +24,10 @@
       --status-warning:  #fab219;
       --status-serious:  #ec835a;
       --status-critical: #d03b3b;
+      --status-good-rgb:     12, 163, 12;
+      --status-warning-rgb:  250, 178, 25;
+      --status-serious-rgb:  236, 131, 90;
+      --status-critical-rgb: 208, 59, 59;
 
       /* Marca institucional (MINEDU) — cromo de header/footer/CTA, no reemplaza los colores de estado */
       --brand-red:       #C0392B;
@@ -224,7 +228,7 @@
       font-size: 0.88rem;
       border: 1px solid var(--status-critical);
       color: var(--status-critical);
-      background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-1));
+      background: rgba(var(--status-critical-rgb), 0.10);
     }
 
     .loading {
@@ -386,9 +390,9 @@
       border-radius: 999px;
       margin-top: 6px;
     }
-    .badge.warning { background: color-mix(in srgb, var(--status-warning) 22%, transparent); color: var(--status-warning); }
-    .badge.good { background: color-mix(in srgb, var(--status-good) 18%, transparent); color: var(--status-good); }
-    .badge.critical { background: color-mix(in srgb, var(--status-critical) 18%, transparent); color: var(--status-critical); }
+    .badge.warning { background: rgba(var(--status-warning-rgb), 0.22); color: var(--status-warning); }
+    .badge.good { background: rgba(var(--status-good-rgb), 0.18); color: var(--status-good); }
+    .badge.critical { background: rgba(var(--status-critical-rgb), 0.18); color: var(--status-critical); }
 
     .purpose-banner {
       display: flex;
@@ -1272,6 +1276,10 @@ function descargarNivelComoPDF(blockEl, nivelNombre, btnEl) {
     })
     .from(blockEl)
     .save()
+    .catch((err) => {
+      console.error("Fallo al generar el PDF:", err);
+      alert("No se pudo generar el PDF. Intenta nuevamente en unos segundos.");
+    })
     .finally(() => {
       btnEl.disabled = false;
       btnEl.textContent = textoOriginal;
