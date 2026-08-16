@@ -251,6 +251,27 @@
       margin-bottom: 40px;
       padding-top: 8px;
     }
+
+    /* Encabezado agregado solo en la captura del PDF (ver
+     * descargarNivelComoPDF) -- no se muestra en el dashboard en vivo. */
+    .pdf-header {
+      margin-bottom: 20px;
+      padding-bottom: 14px;
+      border-bottom: 3px solid var(--brand-red);
+    }
+    .pdf-header h1 {
+      margin: 0 0 6px;
+      font-size: 1.6rem;
+      font-weight: 800;
+      letter-spacing: 0.01em;
+      text-transform: uppercase;
+      color: var(--brand-red);
+    }
+    .pdf-header p {
+      margin: 0;
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+    }
     .nivel-block + .nivel-block {
       border-top: 2px solid var(--gridline);
       padding-top: 32px;
@@ -1265,6 +1286,29 @@ function descargarNivelComoPDF(blockEl, nivelNombre, btnEl) {
   btnEl.textContent = "Generando PDF…";
   btnEl.style.visibility = "hidden"; // no aparece en la captura del PDF
 
+  /* Colchón temporal: un wrapper con un poco de padding invisible
+   * alrededor del bloque, para que el borde de las tarjetas nunca caiga
+   * justo en el límite redondeado del canvas de html2canvas (eso era lo
+   * que recortaba el borde derecho al exportar). Se restaura al terminar. */
+  const parent = blockEl.parentNode;
+  const nextSibling = blockEl.nextSibling;
+  const buffer = document.createElement("div");
+  buffer.style.padding = "4px";
+  parent.insertBefore(buffer, blockEl);
+
+  /* Encabezado del reporte: solo aparece en el PDF exportado, no en el
+   * dashboard en vivo (que ya tiene su propio header institucional). */
+  const pdfHeader = document.createElement("div");
+  pdfHeader.className = "pdf-header";
+  const pdfTitle = document.createElement("h1");
+  pdfTitle.textContent = "Reporte institucional";
+  const pdfSubtitle = document.createElement("p");
+  pdfSubtitle.textContent = `${lastRenderedData?.nombre_ie || "—"} · Nivel ${nivelNombre}`;
+  pdfHeader.append(pdfTitle, pdfSubtitle);
+  buffer.appendChild(pdfHeader);
+
+  buffer.appendChild(blockEl);
+
   html2pdf()
     .set({
       margin: 10,
@@ -1274,13 +1318,15 @@ function descargarNivelComoPDF(blockEl, nivelNombre, btnEl) {
       jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
       pagebreak: { mode: ["avoid-all", "css", "legacy"] },
     })
-    .from(blockEl)
+    .from(buffer)
     .save()
     .catch((err) => {
       console.error("Fallo al generar el PDF:", err);
       alert("No se pudo generar el PDF. Intenta nuevamente en unos segundos.");
     })
     .finally(() => {
+      parent.insertBefore(blockEl, nextSibling);
+      buffer.remove();
       btnEl.disabled = false;
       btnEl.textContent = textoOriginal;
       btnEl.style.visibility = "visible";
