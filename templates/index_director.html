@@ -19,10 +19,15 @@
       --baseline:       #c3c2b7;
       --border:         rgba(11, 11, 11, 0.10);
 
+
       --status-good:     #0ca30c;
       --status-warning:  #fab219;
       --status-serious:  #ec835a;
       --status-critical: #d03b3b;
+      --status-good-rgb:     12, 163, 12;
+      --status-warning-rgb:  250, 178, 25;
+      --status-serious-rgb:  236, 131, 90;
+      --status-critical-rgb: 208, 59, 59;
 
       /* Marca institucional (MINEDU) — cromo de header/footer/CTA, no reemplaza los colores de estado */
       --brand-red:       #C0392B;
@@ -223,7 +228,7 @@
       font-size: 0.88rem;
       border: 1px solid var(--status-critical);
       color: var(--status-critical);
-      background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-1));
+      background: rgba(var(--status-critical-rgb), 0.10);
     }
 
     .loading {
@@ -245,6 +250,27 @@
     .nivel-block {
       margin-bottom: 40px;
       padding-top: 8px;
+    }
+
+    /* Encabezado agregado solo en la captura del PDF (ver
+     * descargarNivelComoPDF) -- no se muestra en el dashboard en vivo. */
+    .pdf-header {
+      margin-bottom: 20px;
+      padding-bottom: 14px;
+      border-bottom: 3px solid var(--brand-red);
+    }
+    .pdf-header h1 {
+      margin: 0 0 6px;
+      font-size: 1.6rem;
+      font-weight: 800;
+      letter-spacing: 0.01em;
+      text-transform: uppercase;
+      color: var(--brand-red);
+    }
+    .pdf-header p {
+      margin: 0;
+      font-size: 0.95rem;
+      color: var(--text-secondary);
     }
     .nivel-block + .nivel-block {
       border-top: 2px solid var(--gridline);
@@ -385,9 +411,9 @@
       border-radius: 999px;
       margin-top: 6px;
     }
-    .badge.warning { background: color-mix(in srgb, var(--status-warning) 22%, transparent); color: var(--status-warning); }
-    .badge.good { background: color-mix(in srgb, var(--status-good) 18%, transparent); color: var(--status-good); }
-    .badge.critical { background: color-mix(in srgb, var(--status-critical) 18%, transparent); color: var(--status-critical); }
+    .badge.warning { background: rgba(var(--status-warning-rgb), 0.22); color: var(--status-warning); }
+    .badge.good { background: rgba(var(--status-good-rgb), 0.18); color: var(--status-good); }
+    .badge.critical { background: rgba(var(--status-critical-rgb), 0.18); color: var(--status-critical); }
 
     .purpose-banner {
       display: flex;
@@ -457,19 +483,26 @@
 
     .criterios-legend {
       display: flex;
-      flex-wrap: wrap;
-      gap: 6px 14px;
+      flex-direction: column;
+      gap: 8px;
       margin: 10px 0 0;
       padding-top: 10px;
       border-top: 1px dashed var(--gridline);
     }
     .criterio-legend-chip {
-      display: inline-flex;
-      align-items: center;
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
       gap: 5px;
       font-size: 0.76rem;
       color: var(--text-secondary);
-      cursor: help;
+    }
+    .criterio-legend-nombre {
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .criterio-legend-desc {
+      color: var(--text-muted);
     }
     .criterio-legend-id {
       display: inline-flex;
@@ -1056,7 +1089,7 @@ let lastRenderedData = null;
  * simplemente no generan pestaña. */
 function render(data) {
   lastRenderedData = data;
-  el.contextName.textContent = `${data.nombre_ie || "—"} · cod. modular ${data.cod_modular || "—"}`;
+  el.contextName.textContent = data.nombre_ie || "—";
 
   const container = document.getElementById("niveles-container");
   container.replaceChildren();
@@ -1253,6 +1286,29 @@ function descargarNivelComoPDF(blockEl, nivelNombre, btnEl) {
   btnEl.textContent = "Generando PDF…";
   btnEl.style.visibility = "hidden"; // no aparece en la captura del PDF
 
+  /* Colchón temporal: un wrapper con un poco de padding invisible
+   * alrededor del bloque, para que el borde de las tarjetas nunca caiga
+   * justo en el límite redondeado del canvas de html2canvas (eso era lo
+   * que recortaba el borde derecho al exportar). Se restaura al terminar. */
+  const parent = blockEl.parentNode;
+  const nextSibling = blockEl.nextSibling;
+  const buffer = document.createElement("div");
+  buffer.style.padding = "4px";
+  parent.insertBefore(buffer, blockEl);
+
+  /* Encabezado del reporte: solo aparece en el PDF exportado, no en el
+   * dashboard en vivo (que ya tiene su propio header institucional). */
+  const pdfHeader = document.createElement("div");
+  pdfHeader.className = "pdf-header";
+  const pdfTitle = document.createElement("h1");
+  pdfTitle.textContent = "Reporte institucional";
+  const pdfSubtitle = document.createElement("p");
+  pdfSubtitle.textContent = `${lastRenderedData?.nombre_ie || "—"} · Nivel ${nivelNombre}`;
+  pdfHeader.append(pdfTitle, pdfSubtitle);
+  buffer.appendChild(pdfHeader);
+
+  buffer.appendChild(blockEl);
+
   html2pdf()
     .set({
       margin: 10,
@@ -1262,9 +1318,15 @@ function descargarNivelComoPDF(blockEl, nivelNombre, btnEl) {
       jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
       pagebreak: { mode: ["avoid-all", "css", "legacy"] },
     })
-    .from(blockEl)
+    .from(buffer)
     .save()
+    .catch((err) => {
+      console.error("Fallo al generar el PDF:", err);
+      alert("No se pudo generar el PDF. Intenta nuevamente en unos segundos.");
+    })
     .finally(() => {
+      parent.insertBefore(blockEl, nextSibling);
+      buffer.remove();
       btnEl.disabled = false;
       btnEl.textContent = textoOriginal;
       btnEl.style.visibility = "visible";
@@ -1470,15 +1532,22 @@ const CRITERIOS = [
 function renderCriteriosLegend(container) {
   container.replaceChildren();
   for (const c of CRITERIOS) {
-    const chip = document.createElement("span");
+    const chip = document.createElement("div");
     chip.className = "criterio-legend-chip";
-    chip.title = `Criterio ${c.id.slice(1)} (${c.id}): Evalúa ${c.que_evalua.charAt(0).toLowerCase() + c.que_evalua.slice(1)}`;
 
     const idSpan = document.createElement("span");
     idSpan.className = "criterio-legend-id";
     idSpan.textContent = c.id;
 
-    chip.append(idSpan, document.createTextNode(c.nombre));
+    const nombreSpan = document.createElement("span");
+    nombreSpan.className = "criterio-legend-nombre";
+    nombreSpan.textContent = `(${c.nombre}):`;
+
+    const descSpan = document.createElement("span");
+    descSpan.className = "criterio-legend-desc";
+    descSpan.textContent = `Evalúa ${c.que_evalua.charAt(0).toLowerCase() + c.que_evalua.slice(1)}`;
+
+    chip.append(idSpan, nombreSpan, descSpan);
     container.appendChild(chip);
   }
 }
