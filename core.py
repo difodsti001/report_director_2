@@ -10,6 +10,7 @@ Dos bases de datos, dos pools separados:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -187,7 +188,7 @@ def _armar_clave_ie(nombre_ie: str, region: str, distrito: str) -> str:
 
 CRITERIOS: dict[str, dict[str, str]] = {
     "C1": {
-        "nombre": "Coherencia propósito–desafíos",
+        "nombre": "Coherencia entre propósito y desafíos",
         "que_evalua": (
             "Que la sesión responda a los desafíos identificados en el "
             "diagnóstico previo (MPE/ENLA/evidencias de aula), no a un "
@@ -203,7 +204,7 @@ CRITERIOS: dict[str, dict[str, str]] = {
         ),
     },
     "C3": {
-        "nombre": "Demanda cognitiva de las actividades",
+        "nombre": "Demanda cognitiva e involucramiento activo",
         "que_evalua": (
             "Que las actividades propuestas exijan análisis, toma de "
             "decisiones o argumentación, no solo participación."
@@ -226,39 +227,44 @@ CRITERIOS: dict[str, dict[str, str]] = {
     },
 }
 
+# Denominación visible según la ficha técnica F4, sección 8. Los IDs
+# B1-B5 se conservan solo en la capa de datos (campo "id" interno) -- el
+# reporte visible al directivo nunca debe mostrar el código.
 BRECHAS: dict[str, dict[str, str]] = {
-    "B1": {"nombre": "Diseño desarticulado del diagnóstico", "tipo": "Crítica"},
-    "B2": {"nombre": "Participación superficial sin fundamentación en evidencias", "tipo": "Crítica"},
-    "B3": {"nombre": "Situación significativa débil o genérica", "tipo": "Estructural"},
-    "B4": {"nombre": "Mediación/evaluación formativa poco coherente", "tipo": "Estructural"},
-    "B5": {"nombre": "Uso de recursos o espacios no justificado", "tipo": "De ajuste"},
+    "B1": {"nombre": "Coherencia del diseño con la información del diagnóstico", "tipo": "Crítica"},
+    "B2": {"nombre": "Participación de los estudiantes y nivel de exigencia de las actividades", "tipo": "Crítica"},
+    "B3": {"nombre": "Situaciones significativas", "tipo": "Estructural"},
+    "B4": {"nombre": "Mediación y evaluación formativa", "tipo": "Estructural"},
+    "B5": {"nombre": "Uso pedagógico de recursos y espacios", "tipo": "De ajuste"},
 }
 
 
 def _nombre_criterio(criterio_id: str) -> str:
-    """'C1' -> 'C1 (Coherencia propósito–desafíos)'. Si el id no está en
-    el diccionario (por ejemplo un criterio nuevo aún no documentado),
-    retorna el id tal cual, sin romper el flujo."""
+    """'C1' -> 'Coherencia entre propósito y desafíos'. Nunca antepone el
+    código: el documento prohíbe mostrar C1-C5/B1-B5 en texto visible al
+    directivo. Si el id no está en el diccionario (por ejemplo un criterio
+    nuevo aún no documentado), retorna el id tal cual, sin romper el flujo."""
     info = CRITERIOS.get(criterio_id)
-    return f"{criterio_id} ({info['nombre']})" if info else criterio_id
+    return info["nombre"] if info else criterio_id
 
 
 def _nombre_brecha(brecha_id: str) -> str:
-    """'B4' -> 'B4 (Mediación/evaluación formativa poco coherente)'."""
+    """'B4' -> 'Mediación y evaluación formativa' (denominación visible,
+    sin el código -- ver _nombre_criterio)."""
     info = BRECHAS.get(brecha_id)
-    return f"{brecha_id} ({info['nombre']})" if info else brecha_id
+    return info["nombre"] if info else brecha_id
 
 CARGOS_DOCENTE = ("DOCENTE", "JERARQUICO")
 
-# Prioridad de las brechas (crítica>estructural>de ajuste) y de niveles (inicio>en_proceso)
+# Prioridad de las brechas (crítica>estructural>de ajuste) y de niveles (inicio>en_desarrollo)
 PRIORIDAD_TIPO = {"Crítica": 3, "Estructural": 2, "De ajuste": 1}
-PRIORIDAD_NIVEL = {"inicio": 2, "en_proceso": 1}
+PRIORIDAD_NIVEL = {"inicio": 2, "en_desarrollo": 1}
 NIVELES_EDUCATIVOS = ("Inicial", "Primaria", "Secundaria")
 
+# Fortaleza: aspecto con >= este % en Logrado+Destacado (agrupado de lectura).
 UMBRAL_FORTALEZA_PCT_LOGRADO = 60
-UMBRAL_OPORTUNIDAD_PCT_EN_PROCESO = 50
-UMBRAL_DESAFIO_PCT_INICIAL = 40
-UMBRAL_DESAFIO_PCT_BRECHA = 30
+# Muestra suficiente: mínimo de sesiones V1 válidas para no usar lenguaje
+# referencial/prudente (ficha técnica, secciones 5 y 14).
 UMBRAL_MUESTRA_INSUFICIENTE = 5
 
 # Cursos y cmids de docentes
@@ -378,7 +384,10 @@ async def contar_docentes_total(nombre_ie: str, region: str, distrito: str, nive
 
 
 async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str, nivel_educativo: Optional[str] = None) -> list[dict]:
-    """Trae todas las filas, solo con evidencias con status = 'success'.
+    """Trae todas las filas de la vista, sin filtrar por status -- incluye
+    'success' (válida), 'validation_failed' (no válida) y 'failed' (sin
+    evidencia real, se trata como sin entrega). El llamador filtra según lo
+    que necesite (ver filas_validas / clasificar_evidencias_por_estado).
     Filtro compuesto por las 3 columnas, igual que en base_ebr_IA. Si se
     pasa nivel_educativo, filtra además por ese nivel; si es None, trae
     los 3 niveles juntos."""
@@ -391,13 +400,13 @@ async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str, nivel_
         )
 
     query = """
-        SELECT user_id, criterion_index, nivel_obtenido, brecha, tipo_brecha
+        SELECT user_id, criterion_index, nivel_obtenido, brecha, tipo_brecha, status,
+               nivel_educativo, retroalimentacion
         FROM public.vw_processing_brechas_ebr
         WHERE nombre_ie = %(nombre_ie)s
           AND "región" = %(region)s
           AND distrito IS NOT DISTINCT FROM %(distrito)s
           AND cmid = ANY(%(cmids_validos)s)
-          AND status = 'success'
           AND (%(nivel_educativo)s::text IS NULL OR nivel_educativo = %(nivel_educativo)s::text)
         ORDER BY user_id, criterion_index
     """
@@ -413,6 +422,8 @@ async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str, nivel_
             },
         )).fetchall()
 
+    _normalizar_nivel_obtenido(rows)
+
     log.info(
         "filas_vista_obtenidas",
         nombre_ie=nombre_ie, region=region, distrito=distrito,
@@ -421,36 +432,18 @@ async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str, nivel_
     return rows
 
 
-async def resolver_niveles_presentes(nombre_ie: str, region: str, distrito: str) -> list[str]:
-    """
-    Detecta qué niveles educativos (de NIVELES_EDUCATIVOS) tienen al
-    menos una evidencia 'success' para esta IE. Una IE puede tener 1, 2
-    o 3 niveles -- el reporte solo genera secciones para los presentes.
-    """
-    cmids_validos = _cmids_docentes_configurados()
-    if not cmids_validos:
-        return []
+# La vista en producción todavía devuelve "en_proceso" como valor de
+# nivel_obtenido, aunque el resto del pipeline (F4, ficha técnica) usa la
+# denominación de 4 niveles con "en_desarrollo". Se normaliza acá, en el
+# único punto donde se leen las filas crudas, para que el resto del
+# código (distribución, prioridad de brechas) solo vea el nombre
+# canónico.
+_ALIAS_NIVEL_OBTENIDO = {"en_proceso": "en_desarrollo"}
 
-    query = """
-        SELECT DISTINCT nivel_educativo
-        FROM public.vw_processing_brechas_ebr
-        WHERE nombre_ie = %(nombre_ie)s
-          AND "región" = %(region)s
-          AND distrito IS NOT DISTINCT FROM %(distrito)s
-          AND cmid = ANY(%(cmids_validos)s)
-          AND status = 'success'
-    """
-    async with pool_datos.connection() as conn:
-        rows = await (await conn.execute(
-            query,
-            {"nombre_ie": nombre_ie, "region": region, "distrito": distrito, "cmids_validos": cmids_validos},
-        )).fetchall()
 
-    presentes = {r["nivel_educativo"] for r in rows}
-    # Se retorna en el orden fijo de NIVELES_EDUCATIVOS, no el orden de
-    # la base, para que el reporte siempre liste los niveles en el mismo
-    # orden consistente (Secundaria, Primaria, Inicial).
-    return [n for n in NIVELES_EDUCATIVOS if n in presentes]
+def _normalizar_nivel_obtenido(rows: list[dict]) -> None:
+    for row in rows:
+        row["nivel_obtenido"] = _ALIAS_NIVEL_OBTENIDO.get(row["nivel_obtenido"], row["nivel_obtenido"])
 
 
 async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str, nivel_educativo: Optional[str] = None) -> int:
@@ -505,6 +498,70 @@ def agrupar_por_docente(filas: list[dict]) -> dict[int, list[dict]]:
     return agrupado
 
 
+def filas_validas(filas: list[dict]) -> list[dict]:
+    """Filtra solo las filas con evidencia válida (status='success').
+    Punto de uso obligatorio antes de cualquier cálculo de desempeño
+    (distribución por aspecto, brechas, fortalezas): esos cálculos nunca
+    deben incluir evidencia no válida o sin entrega real."""
+    return [f for f in filas if f["status"] == "success"]
+
+
+def _extraer_retroalimentaciones(filas_por_docente: dict[int, list[dict]]) -> list[str]:
+    """
+    Extrae el texto de retroalimentación de F2, una vez por docente (la
+    columna 'retroalimentacion' viene repetida en las 5 filas -- una por
+    criterio -- de cada docente). Se pasa como insumo agregado y sin
+    identificar al docente al prompt que genera las preguntas
+    movilizadoras de la RTC 1 (sección 9). Se capa a
+    MAX_RETROALIMENTACIONES_EN_PROMPT para no desmedir el prompt en IEs
+    con muchos docentes.
+    """
+    vistas = []
+    for filas_docente in filas_por_docente.values():
+        texto = (filas_docente[0].get("retroalimentacion") or "").strip()
+        if texto:
+            vistas.append(texto)
+    return vistas[:MAX_RETROALIMENTACIONES_EN_PROMPT]
+
+
+def clasificar_evidencias_por_estado(filas: list[dict], n_docentes_total: int) -> dict:
+    """
+    Clasifica las evidencias de la IE en válidas / no válidas / sin
+    entrega, a partir de las filas crudas de la vista (sin filtrar por
+    status) y el total de docentes registrados.
+
+    status='success'            -> válida.
+    status='validation_failed'  -> no válida (el docente entregó, pero el
+                                    documento no corresponde al producto
+                                    solicitado).
+    status='failed'              -> sin evidencia real que evaluar (no se
+                                    pudo ubicar el documento o se ingresó
+                                    mal) -- se cuenta junto con quienes no
+                                    tienen ninguna fila, como "sin entrega".
+
+    Se asume un status consistente por docente (todas sus filas comparten
+    el mismo status de su intento de entrega).
+    """
+    por_docente = agrupar_por_docente(filas)
+    n_validas = 0
+    n_no_validas = 0
+    for filas_docente in por_docente.values():
+        status = filas_docente[0]["status"]
+        if status == "success":
+            n_validas += 1
+        elif status == "validation_failed":
+            n_no_validas += 1
+        # status == 'failed' (o cualquier otro) no suma aquí -- cae en
+        # n_sin_entrega junto con los docentes sin ninguna fila.
+
+    n_sin_entrega = max(n_docentes_total - n_validas - n_no_validas, 0)
+    return {
+        "n_validas": n_validas,
+        "n_no_validas": n_no_validas,
+        "n_sin_entrega": n_sin_entrega,
+    }
+
+
 def seleccionar_brechas_globales(filas_docente: list[dict]) -> list[str]:
     """
     5 reglas de prioridad para reducir las brechas de un docente a máximo 2:
@@ -537,12 +594,20 @@ def seleccionar_brechas_globales(filas_docente: list[dict]) -> list[str]:
 
 
 def calcular_distribucion_por_criterio(filas: list[dict]) -> list[dict]:
+    """Distribución de las filas VÁLIDAS por aspecto (criterion_index), en
+    los 4 niveles de la rúbrica (inicio, en_desarrollo, logrado, destacado)
+    más los dos agrupados de lectura del documento: "Inicio + En
+    desarrollo" (requiere fortalecimiento) y "Logrado + Destacado"
+    (desempeño favorable). El llamador es responsable de pasar solo filas
+    válidas (ver filas_validas)."""
     por_criterio: dict[int, dict[str, int]] = {}
 
     for fila in filas:
         c = fila["criterion_index"]
         nivel = fila["nivel_obtenido"]
-        conteos = por_criterio.setdefault(c, {"inicio": 0, "en_proceso": 0, "logrado": 0})
+        conteos = por_criterio.setdefault(
+            c, {"inicio": 0, "en_desarrollo": 0, "logrado": 0, "destacado": 0}
+        )
         if nivel in conteos:
             conteos[nivel] += 1
 
@@ -551,11 +616,19 @@ def calcular_distribucion_por_criterio(filas: list[dict]) -> list[dict]:
         total = sum(conteos.values())
         if total == 0:
             continue
+        pct_inicio = round(100 * conteos["inicio"] / total)
+        pct_en_desarrollo = round(100 * conteos["en_desarrollo"] / total)
+        pct_logrado = round(100 * conteos["logrado"] / total)
+        pct_destacado = round(100 * conteos["destacado"] / total)
         resultado.append({
             "criterio_id": f"C{criterio_id}",
-            "pct_inicial": round(100 * conteos["inicio"] / total),
-            "pct_en_proceso": round(100 * conteos["en_proceso"] / total),
-            "pct_logrado": round(100 * conteos["logrado"] / total),
+            "n": total,
+            "pct_inicio": pct_inicio,
+            "pct_en_desarrollo": pct_en_desarrollo,
+            "pct_logrado": pct_logrado,
+            "pct_destacado": pct_destacado,
+            "pct_inicio_en_desarrollo": pct_inicio + pct_en_desarrollo,
+            "pct_logrado_destacado": pct_logrado + pct_destacado,
         })
     return resultado
 
@@ -576,288 +649,603 @@ def calcular_frecuencia_brechas(brechas_por_docente: dict[int, list[str]]) -> di
     }
 
 
-def clasificar_fortalezas_y_oportunidades(distribucion: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Fortaleza: criterio >= 60% logrado. Oportunidad: criterio >= 50% en
-    proceso."""
-    fortalezas, oportunidades = [], []
-
-    for c in distribucion:
-        if c["pct_logrado"] >= UMBRAL_FORTALEZA_PCT_LOGRADO:
-            fortalezas.append({"id": c["criterio_id"], "pct": c["pct_logrado"]})
-        elif c["pct_en_proceso"] >= UMBRAL_OPORTUNIDAD_PCT_EN_PROCESO:
-            oportunidades.append({"id": c["criterio_id"], "pct": c["pct_en_proceso"]})
-
-    return fortalezas, oportunidades
+def clasificar_fortalezas(distribucion: list[dict]) -> list[dict]:
+    """Fortaleza: aspecto con >= UMBRAL_FORTALEZA_PCT_LOGRADO% en el
+    agrupado de lectura 'Logrado + Destacado' (ficha técnica, sección 5:
+    "Logrado + Destacado" es un recurso de lectura, no un nivel nuevo)."""
+    return [
+        {"id": c["criterio_id"], "n": c["n"], "pct": c["pct_logrado_destacado"]}
+        for c in distribucion
+        if c["pct_logrado_destacado"] >= UMBRAL_FORTALEZA_PCT_LOGRADO
+    ]
 
 
-def clasificar_desafios_prioritarios(distribucion: list[dict], frecuencia_brechas: dict[str, dict]) -> list[dict]:
-    """
-    Desafío prioritario (según documentación de la Ruta Formativa):
-      - Criterio C_i con >= 40% de docentes en nivel "inicial", O
-      - Brecha CRÍTICA (B1 o B2 -- tipo="Crítica" en BRECHAS) presente
-        en >= 30% de las entregas válidas.
+def clasificar_necesidades_frecuentes(frecuencia_brechas: dict[str, dict]) -> list[dict]:
+    """Necesidades de mejora que aparecen con mayor frecuencia (ficha
+    técnica, sección 9; modelo de reporte, sección 5): todas las brechas
+    definidas por F2 (brechas_identificadas[]) presentes en al menos un
+    docente evaluado, ordenadas de mayor a menor frecuencia. No se
+    infieren brechas nuevas -- se usa tal cual lo que ya calculó
+    seleccionar_brechas_globales/calcular_frecuencia_brechas."""
+    necesidades = [
+        {"id": brecha_id, "n": info["conteo"], "pct": info["pct"]}
+        for brecha_id, info in frecuencia_brechas.items()
+    ]
+    necesidades.sort(key=lambda n: -n["pct"])
+    return necesidades
 
-    Importante: brechas Estructurales (B3, B4) o De ajuste (B5) NO
-    activan esta regla aunque superen el umbral de %, sin importar qué
-    tan frecuentes sean -- solo las Críticas cuentan aquí. Esto es
-    intencional: el desafío prioritario se reserva para lo más urgente
-    en relación con la planificación pedagógica, no cualquier brecha
-    frecuente.
-    """
-    desafios = []
 
-    for c in distribucion:
-        if c["pct_inicial"] >= UMBRAL_DESAFIO_PCT_INICIAL:
-            desafios.append({"tipo": "criterio", "id": c["criterio_id"], "pct": c["pct_inicial"]})
+def calcular_enfasis_lectura(distribucion_por_id: dict[str, dict]) -> list[dict]:
+    """Énfasis del programa (ficha técnica, sección 7): se leen a partir
+    de los aspectos ya evaluados por F2, sin crear indicadores que F2 no
+    genera. Comprensión lectora no tiene indicador independiente en la
+    rúbrica de la Sesión V1 -- su texto es fijo, tal como exige el
+    documento (no se genera un % institucional para ese énfasis)."""
+    enfasis = []
+    c3 = distribucion_por_id.get("C3")
 
-    for brecha_id, info in frecuencia_brechas.items():
-        es_critica = BRECHAS.get(brecha_id, {}).get("tipo") == "Crítica"
-        if es_critica and info["pct"] >= UMBRAL_DESAFIO_PCT_BRECHA:
-            desafios.append({"tipo": "brecha", "id": brecha_id, "pct": info["pct"]})
+    if c3:
+        favorable = c3["pct_logrado_destacado"] >= c3["pct_inicio_en_desarrollo"]
+        texto_involucramiento = (
+            f"Las actividades previstas ofrecen oportunidades favorables para participar, "
+            f"analizar, decidir y producir: {c3['pct_logrado_destacado']}% de las sesiones "
+            "revisadas se ubica en Logrado o Destacado en demanda cognitiva e involucramiento "
+            "activo."
+            if favorable else
+            f"En {c3['pct_inicio_en_desarrollo']}% de las sesiones revisadas, la demanda "
+            "cognitiva y el involucramiento activo de los estudiantes todavía requiere mayor "
+            "fortalecimiento."
+        )
+        enfasis.append({
+            "enfasis": "Involucramiento activo",
+            "aspecto_relacionado": "C3",
+            "texto_permitido": texto_involucramiento,
+        })
+        enfasis.append({
+            "enfasis": "Pensamiento crítico",
+            "aspecto_relacionado": "C2/C3",
+            "texto_permitido": (
+                "La planificación de una parte de las sesiones revisadas puede ofrecer mayores "
+                "oportunidades para analizar, interpretar, tomar decisiones, argumentar y "
+                "elaborar respuestas propias."
+            ),
+        })
 
-    return desafios
+    enfasis.append({
+        "enfasis": "Comprensión lectora",
+        "aspecto_relacionado": None,
+        "texto_permitido": (
+            "Este reporte no presenta un porcentaje institucional de comprensión lectora "
+            "porque la rúbrica de la Sesión V1 no la evalúa como un criterio independiente. "
+            "Su análisis debe complementarse con evidencias específicas de aprendizaje de los "
+            "estudiantes."
+        ),
+    })
+    enfasis.append({
+        "enfasis": "Aprendizaje basado en situaciones y problemas",
+        "aspecto_relacionado": "C1/C2",
+        "texto_permitido": (
+            "Las situaciones significativas y la demanda cognitiva son aspectos relevantes "
+            "para analizar cómo se están generando oportunidades de aprendizaje profundo; no "
+            "se genera un porcentaje independiente para este énfasis."
+        ),
+    })
+
+    return enfasis
+
+
+def calcular_lectura_por_nivel(filas_validas_ie: list[dict]) -> list[dict]:
+    """Sección 7 del reporte -- lectura diferenciada por nivel educativo,
+    a partir de las filas VÁLIDAS ya traídas para la IE completa (con
+    nivel_educativo incluido, ver obtener_filas_vista). Solo incluye los
+    niveles presentes, en el orden fijo NIVELES_EDUCATIVOS. No establece
+    ranking entre niveles (ficha técnica, sección 13)."""
+    por_nivel: dict[str, list[dict]] = {}
+    for fila in filas_validas_ie:
+        por_nivel.setdefault(fila["nivel_educativo"], []).append(fila)
+
+    lectura = []
+    for nivel in NIVELES_EDUCATIVOS:
+        filas_nivel = por_nivel.get(nivel)
+        if not filas_nivel:
+            continue
+        n = len(agrupar_por_docente(filas_nivel))
+        lectura.append({
+            "nivel_educativo": nivel,
+            "n": n,
+            "muestra_insuficiente": n < UMBRAL_MUESTRA_INSUFICIENTE,
+            "distribucion_por_aspecto": _enriquecer_distribucion_con_nombre(
+                calcular_distribucion_por_criterio(filas_nivel)
+            ),
+        })
+    return lectura
+
+
+FUENTES_CONTRASTE_POR_ASPECTO = {
+    "C1": "MPE y otras evidencias de planificación",
+    "C2": "MPE, ENLA y evidencias de aprendizaje de los estudiantes",
+    "C3": "MPE, ENLA y evidencias de aprendizaje de los estudiantes",
+    "C4": "MPE, instrumentos de evaluación y producciones de los estudiantes",
+    "C5": "MPE y evidencias de aula",
+}
+
+PREGUNTAS_CONTRASTE_POR_ASPECTO = {
+    "C1": "¿Qué decisiones de planificación pueden mantenerse y compartirse para fortalecer otros aspectos?",
+    "C2": "¿Qué relación encontramos entre las oportunidades que brindan las experiencias de aprendizaje y lo que muestran los estudiantes en sus aprendizajes?",
+    "C3": "¿Lo previsto en las sesiones se corresponde con lo que ocurre durante la interacción en el aula?",
+    "C4": "¿Cómo se recoge y utiliza la información sobre el aprendizaje para ajustar la enseñanza?",
+    "C5": "¿Los recursos y espacios previstos se aprovechan efectivamente durante la sesión?",
+}
+
+
+def calcular_aspectos_contraste(distribucion: list[dict], fortalezas: list[dict]) -> list[dict]:
+    """Sección 8 -- 'Lo que conviene contrastar con otras evidencias'
+    (banco de redacción, punto 12, plantilla 'Contraste'). Se arma en
+    Python, sin LLM: toma los aspectos con mayor % en Inicio+En desarrollo
+    (necesitan fortalecimiento) y la principal fortaleza, y les asocia la
+    fuente y pregunta de contraste correspondientes."""
+    aspectos = []
+
+    ordenados = sorted(distribucion, key=lambda c: -c["pct_inicio_en_desarrollo"])
+    for c in ordenados[:2]:
+        if c["pct_inicio_en_desarrollo"] <= 0:
+            continue
+        cid = c["criterio_id"]
+        aspectos.append({
+            "hallazgo": (
+                f"{_nombre_criterio(cid)}: {c['pct_inicio_en_desarrollo']}% de las sesiones "
+                "revisadas requiere mayor fortalecimiento."
+            ),
+            "fuente_sugerida": FUENTES_CONTRASTE_POR_ASPECTO.get(cid, "MPE y ENLA"),
+            "pregunta": PREGUNTAS_CONTRASTE_POR_ASPECTO.get(
+                cid, "¿Qué conviene revisar para comprender mejor esta situación?"
+            ),
+        })
+
+    if fortalezas:
+        top = max(fortalezas, key=lambda f: f["pct"])
+        cid = top["id"]
+        aspectos.append({
+            "hallazgo": f"{_nombre_criterio(cid)} aparece como una fortaleza ({top['pct']}% en Logrado o Destacado).",
+            "fuente_sugerida": FUENTES_CONTRASTE_POR_ASPECTO.get(cid, "MPE"),
+            "pregunta": PREGUNTAS_CONTRASTE_POR_ASPECTO.get(
+                cid, "¿Qué decisiones de planificación conviene preservar?"
+            ),
+        })
+
+    return aspectos
+
+
+# Sección 9 -- preguntas movilizadoras para la RTC 1. El camino normal es
+# que el LLM las genere a partir de las retroalimentaciones reales de los
+# docentes (ver _construir_prompt_secciones_narrativas / campo
+# "retroalimentacion" de la vista) -- esta lista fija es solo el
+# fallback si el LLM falla dos veces seguidas (ver
+# _secciones_narrativas_fallback).
+PREGUNTAS_RTC_FIJAS = (
+    "¿Qué información de este reporte se confirma cuando la contrastamos con MPE, ENLA y las "
+    "evidencias de aprendizaje de nuestros estudiantes?",
+    "¿Qué oportunidades estamos ofreciendo actualmente a los estudiantes para comprender, "
+    "analizar, argumentar, tomar decisiones y producir respuestas propias?",
+    "¿Qué diferencias encontramos entre lo que se planifica en las sesiones y lo que "
+    "observamos en la práctica real de aula?",
+    "¿Qué decisiones de planificación que ya están funcionando favorablemente podemos "
+    "aprovechar para fortalecer otros aspectos?",
+    "¿Qué información adicional necesitamos revisar antes de definir la necesidad que la "
+    "institución debe priorizar?",
+)
 
 
 # =============================================================================
 # Redacción del texto narrativo (LLM)
 # =============================================================================
 
-def _enriquecer_con_nombres(v: dict) -> dict:
+def _enriquecer_distribucion_con_nombre(distribucion: list[dict]) -> list[dict]:
+    return [{**c, "nombre": _nombre_criterio(c["criterio_id"])} for c in distribucion]
+
+
+def _enriquecer_necesidades_con_nombre(necesidades: list[dict]) -> list[dict]:
+    return [{**n, "nombre": _nombre_brecha(n["id"])} for n in necesidades]
+
+
+def _enriquecer_fortalezas_con_nombre(fortalezas: list[dict]) -> list[dict]:
+    return [{**f, "nombre": _nombre_criterio(f["id"])} for f in fortalezas]
+
+
+# Tope de retroalimentaciones que se envían al prompt -- evita un prompt
+# desmedido en IEs con muchos docentes; una muestra representativa basta
+# para que el LLM identifique temas recurrentes.
+MAX_RETROALIMENTACIONES_EN_PROMPT = 40
+
+
+def _construir_prompt_secciones_narrativas(v: dict) -> str:
     """
-    Arma versiones legibles de fortalezas/oportunidades/desafíos con el
-    nombre real del criterio o brecha ya resuelto -- así el LLM no tiene
-    que memorizar el diccionario CRITERIOS/BRECHAS, solo usa el texto
-    que ya viene armado.
+    Arma el prompt para las TRES piezas de texto que sí requieren
+    elaboración a partir de lenguaje libre (no son un fill-in-the-blank
+    determinista): la interpretación de cada uno de los 5 aspectos
+    (sección 3 del reporte), las preguntas movilizadoras para la RTC 1
+    (sección 9, a partir de las retroalimentaciones reales de F2) y la
+    síntesis institucional (sección 10). Todo lo demás del reporte
+    (tablas, énfasis, necesidades, fortalezas, contraste) se arma en
+    Python -- ver generar_reporte.
+
+    Reglas duras (ficha técnica F4, sección 11): sin las palabras
+    "brecha/alerta/patrón/clúster/semaforización/nivel global", sin
+    códigos C1-C5/B1-B5, sin lenguaje causal, sin "la mayoría" si la
+    muestra es menor de 5, cifras siempre con n y %, distinguir "las
+    sesiones muestran" de "la institución presenta", sin recomendaciones
+    individuales al docente, sin markdown ni placeholders.
     """
-    fortalezas = [
-        f"{_nombre_criterio(f['id'])}: {f['pct']}% en nivel logrado"
-        for f in v.get("fortalezas_predominantes", [])
-    ]
-    oportunidades = [
-        f"{_nombre_criterio(o['id'])}: {o['pct']}% en proceso"
-        for o in v.get("oportunidades_comunes", [])
-    ]
-    desafios = []
-    for d in v.get("desafios_prioritarios", []):
-        if d["tipo"] == "criterio":
-            desafios.append(f"{_nombre_criterio(d['id'])}: {d['pct']}% en nivel inicial")
-        else:
-            desafios.append(f"{_nombre_brecha(d['id'])}: presente en {d['pct']}% de los docentes evaluados")
+    distribucion = v["distribucion_por_aspecto"]
+    necesidades = v["necesidades_frecuentes"]
+    fortalezas = v["fortalezas"]
+    retroalimentaciones = v.get("retroalimentaciones", [])
 
-    return {"fortalezas": fortalezas, "oportunidades": oportunidades, "desafios": desafios}
+    aspectos_texto = "\n".join(
+        f"- {c['nombre']} (id interno {c['criterio_id']}): {c['n']} sesiones válidas -- "
+        f"Inicio {c['pct_inicio']}%, En desarrollo {c['pct_en_desarrollo']}%, "
+        f"Logrado {c['pct_logrado']}%, Destacado {c['pct_destacado']}% "
+        f"(Inicio+En desarrollo {c['pct_inicio_en_desarrollo']}%, "
+        f"Logrado+Destacado {c['pct_logrado_destacado']}%)"
+        for c in distribucion
+    )
+    necesidades_texto = "\n".join(
+        f"- {n['nombre']}: presente en {n['n']} de {v['n_evidencias_validas']} sesiones ({n['pct']}%)"
+        for n in necesidades
+    ) or "- Ninguna necesidad frecuente identificada."
+    fortalezas_texto = "\n".join(
+        f"- {f['nombre']}: {f['n']} de {v['n_evidencias_validas']} sesiones ({f['pct']}%) en Logrado o Destacado"
+        for f in fortalezas
+    ) or "- Ninguna alcanzó el umbral de fortaleza."
+    retroalimentaciones_texto = "\n".join(f"- {r}" for r in retroalimentaciones) or (
+        "- Sin retroalimentaciones registradas para esta IE."
+    )
 
+    # Resuelto en Python (no se le pide al LLM que compare 5 aspectos y
+    # elija cuál tiene mayor concentración -- ese cálculo, como todos los
+    # demás en este prompt, ya viene hecho para que el LLM solo redacte).
+    top_concentracion = sorted(
+        (c for c in distribucion if c["pct_inicio_en_desarrollo"] > 0),
+        key=lambda c: -c["pct_inicio_en_desarrollo"],
+    )[:2]
+    concentracion_texto = "\n".join(
+        f"- {c['nombre']}: {c['pct_inicio_en_desarrollo']}% en Inicio o En desarrollo"
+        for c in top_concentracion
+    ) or "- Ningún aspecto concentra una proporción relevante en Inicio o En desarrollo."
 
-def _construir_prompt_reporte(v: dict) -> str:
-    """Prompt con las restricciones duras: sin identificar docentes, sin
-    formato de carta ni placeholders, usando exactamente los porcentajes
-    dados, con nombres reales de criterios/brechas, en el orden oficial
-    del banco de redacción (Resumen ejecutivo -> Fortalezas ->
-    Oportunidades -> Desafíos prioritarios), y sin sugerir acciones --
-    solo describe y prioriza, la decisión queda en manos del directivo."""
-    legible = _enriquecer_con_nombres(v)
+    ids_criterios = ", ".join(f'"{c["criterio_id"]}"' for c in distribucion)
+    ids_fortalezas = ", ".join(f'"{f["id"]}"' for f in fortalezas)
+    ids_necesidades = ", ".join(f'"{n["id"]}"' for n in necesidades)
 
     return f"""
-Redacta un reporte institucional breve para un directivo de una IE del
-sistema educativo peruano, en español, tono institucional orientado a la
-toma de decisiones colegiadas. No nombres ni des pistas sobre ningún
-docente individual: todas las cifras son agregadas.
+Eres un redactor pedagógico para el sistema educativo peruano. Vas a
+redactar piezas de un reporte institucional para el directivo de una IE,
+a partir de datos YA CALCULADOS (no recalcules ni inventes cifras).
 
-Este texto corresponde específicamente al nivel educativo {v.get('nivel_educativo')}
-de la institución (la IE puede tener otros niveles con sus propios
-reportes separados) -- las cifras de docentes totales, evaluados y
-cobertura son SOLO de este nivel, no de la IE completa.
-
-Datos generales (para el Resumen ejecutivo):
+Datos generales:
 - IE: {v.get('nombre_ie')}
-- Nivel educativo: {v.get('nivel_educativo')}
-- Docentes totales registrados (en este nivel): {v.get('n_docentes_total')}
-- Docentes evaluados (en este nivel): {v.get('n_docentes_evaluados')}
-- Cobertura (de este nivel): {v.get('pct_cobertura')}%
-- Muestra insuficiente: {v.get('muestra_insuficiente')}
+- Sesiones V1 válidas: {v.get('n_evidencias_validas')} de {v.get('n_docentes_total')} docentes registrados ({v.get('pct_cobertura')}% de cobertura)
+- Muestra suficiente (>= 5 sesiones válidas): {v.get('muestra_suficiente')}
 
-Fortalezas predominantes:
-{chr(10).join(f"- {f}" for f in legible["fortalezas"]) or "- Ninguna alcanzó el umbral de fortaleza."}
+Resultados por aspecto evaluado:
+{aspectos_texto}
 
-Oportunidades de mejora comunes:
-{chr(10).join(f"- {o}" for o in legible["oportunidades"]) or "- Ninguna identificada."}
+Necesidades de mejora que aparecen con mayor frecuencia:
+{necesidades_texto}
 
-Desafíos prioritarios:
-{chr(10).join(f"- {d}" for d in legible["desafios"]) or "- Ninguno identificado."}
+Fortalezas identificadas:
+{fortalezas_texto}
 
-Estructura y orden del contenido (seguir este orden exacto de ideas, PERO
-como texto corrido en párrafos -- NO uses títulos ni encabezados de
-sección, ni en negrita ni mencionados explícitamente como "Resumen
-ejecutivo:" o "Fortalezas predominantes:". El lector no debe ver
-etiquetas de sección, solo párrafos que fluyen naturalmente uno tras
-otro siguiendo este orden de contenido):
-1. Primer párrafo: cuántos docentes evaluados de cuántos totales EN ESTE
-   NIVEL, con el porcentaje de cobertura de este nivel, a modo de línea
-   base institucional. Tipo "Al cierre del plazo, [n_evaluados] de
-   [n_total] docentes del nivel [nivel_educativo] entregaron su Sesión
-   de aprendizaje con evidencia válida ([pct_cobertura]% de cobertura)."
-2. Siguiente párrafo: para cada fortaleza, una frase con el porcentaje
-   y el nombre del criterio, indicando que sugiere una base
-   institucional sólida en esa área.
-3. Siguiente párrafo: para cada oportunidad, una frase con el
-   porcentaje y el criterio, indicando que es una oportunidad
-   compartida (no un caso aislado) para el análisis colegiado.
-4. Último párrafo: para cada desafío, una frase con el porcentaje, el
-   nombre de la brecha o criterio, indicando que requiere atención
-   priorizada en el análisis institucional.
-5. NO agregues un párrafo de cierre ni una recomendación final más allá
-   de esos 4 párrafos. NO sugieras una acción, estrategia o próximo
-   paso concreto -- el reporte describe y prioriza la información, pero
-   la decisión de qué hacer queda enteramente en manos del directivo.
+Aspecto(s) con mayor concentración de necesidad de fortalecimiento (ya
+calculado -- úsalo tal cual para el segundo párrafo de la síntesis, no
+elijas ni calcules otro):
+{concentracion_texto}
 
-Reglas estrictas de formato y contenido:
-- NO uses markdown de ningún tipo: sin negritas (**texto**), sin
-  encabezados (#), sin viñetas ni listas. Solo párrafos de texto plano
-  separados por un salto de línea en blanco.
-- Usa el NOMBRE del criterio o la brecha tal como aparece arriba (ej.
-  "Mediación y evaluación formativa"), no solo el código "C4" o "B4" a
-  secas -- el directivo no memoriza los códigos.
-- NO uses formato de carta formal. Sin fecha, sin "Dirigido a:", sin
-  "Atentamente", sin nombre de remitente ni destinatario, y sobre todo
-  SIN placeholders entre corchetes como "[Nombre del directivo]" o
-  "[Fecha del reporte]". Si no tienes un dato, simplemente no lo
-  menciones -- nunca inventes un marcador de posición.
-- Usa EXACTAMENTE los porcentajes ya calculados arriba, tal como están
-  escritos junto a cada criterio o brecha. No los recalcules ni los
-  mezcles entre secciones.
-- El primer párrafo DEBE declarar explícitamente cuántos docentes se
-  evaluaron de cuántos totales y el % de cobertura -- nunca omitas este
-  dato ni presentes los porcentajes de fortalezas/oportunidades/desafíos
-  como si representaran a toda la plana docente de la institución. Todos
-  esos porcentajes son sobre los docentes EVALUADOS, no sobre el total.
-- Si "Muestra insuficiente" es verdadero, evita expresiones categóricas
-  como "la mayoría" o "el patrón institucional"; usa formulaciones
-  referenciales ("de los docentes evaluados hasta la fecha...").
-- No compares esta IE con otras instituciones. No uses lenguaje
-  evaluativo sobre docentes individuales. No sugieras acciones,
-  estrategias, ni próximos pasos -- solo describe y prioriza.
+Retroalimentaciones registradas para los docentes de esta IE (texto libre
+de F2, ya agregado -- NUNCA estén asociadas a un docente identificable en
+tu respuesta, úsalas solo para reconocer temas recurrentes):
+{retroalimentaciones_texto}
+
+Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional antes
+ni después, con esta forma exacta:
+{{
+  "interpretaciones": {{ {ids_criterios}: "texto del aspecto correspondiente", ... }},
+  "manifestaciones": {{
+    "fortalezas": {{ {ids_fortalezas or '"<id>"'}: "manifestación breve", ... }},
+    "necesidades": {{ {ids_necesidades or '"<id>"'}: "manifestación breve", ... }}
+  }},
+  "preguntas_rtc": ["pregunta 1", "pregunta 2", "..."],
+  "sintesis_institucional": "texto de síntesis"
+}}
+
+Para cada "interpretaciones.<id>" (uno por cada aspecto listado arriba),
+sigue esta plantilla como base, adaptándola con naturalidad (banco de
+redacción del programa): "En [n] de [N] sesiones ([pct]%) se observa
+[resultado]. Esto significa que [explicación pedagógica]. Para comprender
+mejor esta situación, conviene contrastarla con [fuente]." Usa el
+resultado predominante de ESE aspecto (el nivel o agrupado con mayor %)
+para describir "[resultado]", y una fuente de MPE/ENLA/evidencias de
+aprendizaje/otras según corresponda.
+
+Para cada "manifestaciones.fortalezas.<id>" (uno por cada fortaleza
+listada arriba) y "manifestaciones.necesidades.<id>" (uno por cada
+necesidad listada arriba), escribe SOLO el fragmento de "manifestación"
+pedagógica -- una frase breve en minúscula que complete naturalmente,
+SIN repetir el nombre del aspecto ni las cifras (eso ya lo arma el
+sistema por fuera): para fortalezas, algo que podría continuar "Las
+evidencias muestran ..."; para necesidades, algo que podría continuar
+"En estas sesiones se observa ...". Ejemplo de fortaleza: "una relación
+clara y consistente entre el propósito de la sesión y el desafío
+planteado a los estudiantes". Ejemplo de necesidad: "actividades que
+ofrecen oportunidades limitadas para que los estudiantes analicen,
+decidan o argumenten". NUNCA antepongas una etiqueta como "Fortaleza:"
+o "Necesidad:" -- es solo el fragmento de texto, no una oración
+completa ni un título.
+
+Para "preguntas_rtc", genera de 4 a 6 preguntas movilizadoras abiertas
+para preparar la RTC 1, orientadas al análisis colectivo del equipo
+docente. Básalas en los TEMAS RECURRENTES que reconozcas en las
+retroalimentaciones registradas arriba (no inventes temas que no
+aparezcan en ellas) y en los resultados por aspecto. Cada pregunta debe
+ser general para el equipo (nunca mencionar ni describir a un docente en
+particular, ni citar textualmente una retroalimentación) y debe invitar a
+contrastar la información con MPE, ENLA u otras evidencias, no a asignar
+responsabilidades individuales.
+
+Para "sintesis_institucional", redacta TRES párrafos (separados por un
+salto de línea en blanco, sin encabezados ni numeración), siguiendo esta
+estructura como base (banco de redacción del programa):
+1. Panorama cualitativo: qué base favorable tiene la institución (la o
+   las fortalezas) y qué aspectos requieren seguir fortaleciéndose (las
+   necesidades), en prosa, sin cifras todavía.
+2. Concentración cuantitativa: menciona EXACTAMENTE el/los aspecto(s) y
+   porcentaje(s) que aparecen en "Aspecto(s) con mayor concentración de
+   necesidad de fortalecimiento" arriba (no elijas ni calcules otro), y
+   cierra indicando que esta información es relevante para el
+   diagnóstico pero no permite por sí sola establecer cuál es la
+   necesidad institucional prioritaria.
+3. Contraste y propósito: indica que, para avanzar hacia una comprensión
+   institucional, corresponde contrastar estos resultados con MPE, ENLA
+   y las evidencias de aprendizaje de los estudiantes; plantea la
+   pregunta central que conviene sostener entre las condiciones que
+   ofrecen las experiencias de aprendizaje y las necesidades de
+   aprendizaje de los estudiantes; y cierra señalando que esa
+   contrastación permitirá fundamentar las decisiones del Diagnóstico
+   institucional y, después, de la RTC 1.
+
+Reglas estrictas, sin excepción:
+- NUNCA uses las palabras "brecha", "brechas", "alerta", "alertas",
+  "patrón", "patrones", "clúster", "semaforización" ni "nivel global".
+- NUNCA muestres los códigos internos (C1, C2, C3, C4, C5, B1, B2, B3,
+  B4, B5) en el texto -- usa siempre el nombre del aspecto o necesidad
+  tal como aparece arriba.
+- NUNCA uses lenguaje causal ("esto provoca", "esto explica", "la causa
+  es", "debido a que"). Los datos no permiten establecer causalidad.
+- NUNCA formules recomendaciones ni menciones individuales a un docente
+  (ni en las interpretaciones ni en las preguntas): el destinatario es
+  siempre el directivo, y las cifras y temas son agregados.
+- Distingue siempre entre "las sesiones muestran/revelan" (lo que dice
+  la evidencia) y "la institución presenta/tiene" (una conclusión
+  institucional) -- prefiere la primera forma salvo que la cobertura sea
+  alta y el dato sea claramente representativo.
+- Si "Muestra suficiente" es falso, evita "la mayoría" y cualquier
+  generalización a toda la institución; usa formulaciones referenciales
+  ("en las sesiones revisadas...").
+- Toda cifra que menciones (n y %) debe existir tal cual en los datos de
+  arriba -- no la recalcules ni la combines entre aspectos distintos.
+- Sin markdown (sin **negritas**, sin #, sin viñetas). Sin placeholders
+  entre corchetes. Sin fecha, sin "Dirigido a:", sin "Atentamente".
+- Todo texto que redactes es prosa fluida: NINGÚN campo debe empezar con
+  una etiqueta o encabezado tipo "Síntesis:", "Contraste:", "Fortaleza:",
+  "Necesidad:" ni similar -- el nombre de la sección ya lo pone el
+  reporte por fuera, el texto que redactas es solo el contenido.
+- No sugieras acciones, estrategias ni próximos pasos concretos: el
+  reporte describe y prioriza, la decisión queda en manos del directivo.
 """.strip()
 
 
-async def redactar_texto_reporte(variables: dict) -> str:
-    """Llama al LLM para redactar texto_reporte a partir de las variables
-    ya calculadas. El LLM no decide clasificaciones, solo redacta prosa."""
-    prompt = _construir_prompt_reporte(variables)
-    inicio = time.monotonic()
+def _secciones_narrativas_fallback(variables: dict) -> dict:
+    """Degradación si el LLM falla dos veces seguidas: texto plantillado
+    mínimo (sin elaboración pedagógica), para no romper el reporte
+    completo por una falla de la llamada al LLM."""
+    interpretaciones = {
+        c["criterio_id"]: (
+            f"En {c['n']} sesiones revisadas, {c['nombre']} alcanza {c['pct_logrado_destacado']}% "
+            f"en Logrado o Destacado y {c['pct_inicio_en_desarrollo']}% en Inicio o En desarrollo."
+        )
+        for c in variables["distribucion_por_aspecto"]
+    }
+    sintesis = (
+        f"La revisión de las Sesiones V1 de {variables.get('nombre_ie', 'la institución')} reúne "
+        f"{variables.get('n_evidencias_validas')} de {variables.get('n_docentes_total')} sesiones "
+        f"válidas ({variables.get('pct_cobertura')}% de cobertura). Estos resultados aportan una "
+        "línea de base para el Diagnóstico institucional; su interpretación requiere "
+        "contrastarlos con las demás evidencias disponibles."
+    )
+    manifestacion_generica = "resultados que conviene revisar con mayor detalle junto con otras evidencias"
+    return {
+        "interpretaciones": interpretaciones,
+        "manifestaciones": {
+            "fortalezas": {f["id"]: manifestacion_generica for f in variables["fortalezas"]},
+            "necesidades": {n["id"]: manifestacion_generica for n in variables["necesidades_frecuentes"]},
+        },
+        "preguntas_rtc": list(PREGUNTAS_RTC_FIJAS),
+        "sintesis_institucional": sintesis,
+    }
 
-    try:
-        texto = await generar_texto_narrativo(prompt)
-    except Exception:
+
+async def redactar_secciones_narrativas(variables: dict) -> dict:
+    """Llama al LLM UNA vez por reporte para redactar las interpretaciones
+    por aspecto y la síntesis institucional -- las únicas piezas que
+    requieren elaboración pedagógica real; todo lo demás del reporte se
+    arma en Python. Si el LLM no devuelve un JSON válido con la forma
+    esperada, reintenta una vez; si vuelve a fallar, degrada a un texto
+    plantillado mínimo en vez de romper el reporte completo."""
+    prompt = _construir_prompt_secciones_narrativas(variables)
+    ids_esperados = {c["criterio_id"] for c in variables["distribucion_por_aspecto"]}
+    ids_fortalezas_esperadas = {f["id"] for f in variables["fortalezas"]}
+    ids_necesidades_esperadas = {n["id"] for n in variables["necesidades_frecuentes"]}
+
+    for intento in (1, 2):
+        inicio = time.monotonic()
+        try:
+            crudo = await generar_texto_narrativo(prompt, formato_json=True)
+            data = json.loads(crudo)
+            interpretaciones = data["interpretaciones"]
+            manifestaciones = data["manifestaciones"]
+            preguntas_rtc = data["preguntas_rtc"]
+            sintesis = data["sintesis_institucional"]
+            if not ids_esperados.issubset(interpretaciones.keys()):
+                raise ValueError("faltan interpretaciones para algún aspecto en la respuesta del LLM")
+            if not ids_fortalezas_esperadas.issubset(manifestaciones.get("fortalezas", {}).keys()):
+                raise ValueError("faltan manifestaciones de fortaleza en la respuesta del LLM")
+            if not ids_necesidades_esperadas.issubset(manifestaciones.get("necesidades", {}).keys()):
+                raise ValueError("faltan manifestaciones de necesidad en la respuesta del LLM")
+            if not isinstance(preguntas_rtc, list) or not preguntas_rtc:
+                raise ValueError("preguntas_rtc vacío o con formato inválido en la respuesta del LLM")
+        except Exception:
+            duracion_ms = round((time.monotonic() - inicio) * 1000)
+            log.error(
+                "llm_secciones_narrativas_fallidas",
+                cod_modular=variables.get("cod_modular"),
+                intento=intento,
+                duracion_ms=duracion_ms,
+                exc_info=True,
+            )
+            if intento == 2:
+                return _secciones_narrativas_fallback(variables)
+            continue
+
         duracion_ms = round((time.monotonic() - inicio) * 1000)
-        log.error(
-            "llm_llamada_fallida",
+        log.info(
+            "llm_secciones_narrativas_generadas",
             cod_modular=variables.get("cod_modular"),
             duracion_ms=duracion_ms,
-            exc_info=True,
         )
-        raise
+        return {
+            "interpretaciones": interpretaciones,
+            "manifestaciones": manifestaciones,
+            "preguntas_rtc": preguntas_rtc,
+            "sintesis_institucional": sintesis,
+        }
 
-    duracion_ms = round((time.monotonic() - inicio) * 1000)
-    log.info(
-        "llm_texto_generado",
-        cod_modular=variables.get("cod_modular"),
-        duracion_ms=duracion_ms,
-        chars_generados=len(texto),
-    )
-    return texto
+
+def _sin_punto_final(texto: str) -> str:
+    """El LLM a veces devuelve la manifestación ya terminada en punto;
+    esta plantilla siempre le agrega su propio punto final, así que se
+    recorta acá para no terminar con '..'."""
+    return texto.rstrip().rstrip(".")
 
 
 # =============================================================================
 # Orquestador de generación
 # =============================================================================
 
-async def _generar_seccion_nivel(
-    cod_modular: str, nombre_ie: str, region: str, distrito: str, nivel_educativo: str
-) -> dict:
+async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrito: str) -> dict:
     """
-    Corre el pipeline completo de análisis (reglas de negocio + LLM)
-    para UN nivel educativo específico de la IE. n_docentes_total y
-    pct_cobertura son relativos a ESTE nivel, no a la IE completa (cada
-    nivel se compara contra su propio total de docentes).
-    """
-    filas = await obtener_filas_vista(nombre_ie, region, distrito, nivel_educativo)
-    filas_por_docente = agrupar_por_docente(filas)
-    n_docentes_evaluados = len(filas_por_docente)
+    Genera el Reporte Institucional 1 (F4): un único análisis
+    institucional para la IE completa (no uno por nivel educativo como
+    antes), con la lectura diferenciada por nivel como una sección más
+    (ficha técnica, punto 10, sección 7).
 
-    n_docentes_total = await contar_docentes_total(nombre_ie, region, distrito, nivel_educativo)
+    cod_modular es la CLAVE COMPUESTA (nombre_ie|región|distrito), usada
+    como institución y para logs/caché. nombre_ie, region, distrito por
+    separado son los que se usan en las queries reales contra
+    base_ebr_IA y vw_processing_brechas_ebr.
+    """
+    todas_las_filas = await obtener_filas_vista(nombre_ie, region, distrito)
+    if not todas_las_filas:
+        raise SinDatosDisponiblesError(f"Sin datos en la vista para {cod_modular}")
+
+    n_docentes_total = await contar_docentes_total(nombre_ie, region, distrito)
+    estados = clasificar_evidencias_por_estado(todas_las_filas, n_docentes_total)
+    n_evidencias_validas = estados["n_validas"]
+
     pct_cobertura = (
-        round(100 * n_docentes_evaluados / n_docentes_total) if n_docentes_total > 0 else 0
+        round(100 * n_evidencias_validas / n_docentes_total) if n_docentes_total > 0 else 0
     )
-
-    muestra_insuficiente = (
-        n_docentes_evaluados < UMBRAL_MUESTRA_INSUFICIENTE and pct_cobertura < 100
-    )
-    if muestra_insuficiente:
+    muestra_suficiente = n_evidencias_validas >= UMBRAL_MUESTRA_INSUFICIENTE
+    if not muestra_suficiente:
         log.info(
-            "seccion_generada_muestra_insuficiente",
+            "reporte_generado_muestra_insuficiente",
             cod_modular=cod_modular,
-            nivel_educativo=nivel_educativo,
-            n_docentes_evaluados=n_docentes_evaluados,
+            n_evidencias_validas=n_evidencias_validas,
             pct_cobertura=pct_cobertura,
         )
+
+    filas_ok = filas_validas(todas_las_filas)
+    filas_por_docente = agrupar_por_docente(filas_ok)
 
     brechas_por_docente = {
         user_id: seleccionar_brechas_globales(filas_docente)
         for user_id, filas_docente in filas_por_docente.items()
     }
 
-    distribucion = calcular_distribucion_por_criterio(filas)
+    distribucion = calcular_distribucion_por_criterio(filas_ok)
+    distribucion_por_id = {c["criterio_id"]: c for c in distribucion}
     frecuencia_brechas = calcular_frecuencia_brechas(brechas_por_docente)
-    fortalezas, oportunidades = clasificar_fortalezas_y_oportunidades(distribucion)
-    desafios = clasificar_desafios_prioritarios(distribucion, frecuencia_brechas)
+
+    fortalezas = clasificar_fortalezas(distribucion)
+    necesidades_frecuentes = clasificar_necesidades_frecuentes(frecuencia_brechas)
+    enfasis_lectura = calcular_enfasis_lectura(distribucion_por_id)
+    lectura_por_nivel = calcular_lectura_por_nivel(filas_ok)
+    aspectos_contraste = calcular_aspectos_contraste(distribucion, fortalezas)
 
     variables = {
         "cod_modular": cod_modular,
         "nombre_ie": nombre_ie,
-        "nivel_educativo": nivel_educativo,
-        "fecha_generacion": datetime.now().isoformat(),
         "n_docentes_total": n_docentes_total,
-        "n_docentes_evaluados": n_docentes_evaluados,
+        "n_evidencias_validas": n_evidencias_validas,
+        "n_evidencias_no_validas": estados["n_no_validas"],
+        "n_sin_entrega": estados["n_sin_entrega"],
         "pct_cobertura": pct_cobertura,
-        "muestra_insuficiente": muestra_insuficiente,
-        "distribucion_por_criterio": distribucion,
-        "fortalezas_predominantes": fortalezas,
-        "oportunidades_comunes": oportunidades,
-        "desafios_prioritarios": desafios,
+        "muestra_suficiente": muestra_suficiente,
+        "distribucion_por_aspecto": _enriquecer_distribucion_con_nombre(distribucion),
+        "necesidades_frecuentes": _enriquecer_necesidades_con_nombre(necesidades_frecuentes),
+        "fortalezas": _enriquecer_fortalezas_con_nombre(fortalezas),
+        "retroalimentaciones": _extraer_retroalimentaciones(filas_por_docente),
     }
-    variables["texto_reporte"] = await redactar_texto_reporte(variables)
-    return variables
+    narrativas = await redactar_secciones_narrativas(variables)
+    preguntas_rtc = narrativas["preguntas_rtc"]
 
-
-async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrito: str) -> dict:
-    """
-    cod_modular aquí es la CLAVE COMPUESTA (nombre_ie|región|distrito),
-    usada solo para logs y como identificador en el JSON de salida.
-    nombre_ie, region, distrito por separado son los que se usan en las
-    queries reales contra base_ebr_IA y vw_processing_brechas_ebr.
-
-    El reporte es por IE, pero con una sección independiente POR CADA
-    nivel educativo presente (Secundaria/Primaria/Inicial) -- una IE
-    puede tener 1, 2 o 3 niveles. Cada nivel corre su propio análisis
-    completo (reglas de negocio + llamada al LLM), comparando su propia
-    cobertura contra el total de docentes de ESE nivel únicamente.
-
-    Retorna {"cod_modular": ..., "nombre_ie": ..., "niveles": {"Primaria":
-    {...sección...}, "Secundaria": {...}}} -- solo con los niveles que
-    realmente tienen evidencia para esta IE.
-    """
-    niveles_presentes = await resolver_niveles_presentes(nombre_ie, region, distrito)
-    if not niveles_presentes:
-        raise SinDatosDisponiblesError(f"Sin datos en la vista para {cod_modular}")
-
-    secciones: dict[str, dict] = {}
-    for nivel in niveles_presentes:
-        secciones[nivel] = await _generar_seccion_nivel(cod_modular, nombre_ie, region, distrito, nivel)
+    # Adjunta a cada fortaleza/necesidad su manifestación pedagógica (el
+    # fragmento que redactó el LLM), completando la plantilla del banco
+    # de redacción (punto 12) -- las cifras las controla Python, el LLM
+    # solo aporta el fragmento cualitativo.
+    variables["fortalezas"] = [
+        {**f, "manifestacion": _sin_punto_final(narrativas["manifestaciones"]["fortalezas"].get(f["id"], ""))}
+        for f in variables["fortalezas"]
+    ]
+    variables["necesidades_frecuentes"] = [
+        {**n, "manifestacion": _sin_punto_final(narrativas["manifestaciones"]["necesidades"].get(n["id"], ""))}
+        for n in variables["necesidades_frecuentes"]
+    ]
 
     return {
+        "reporte_id": f"{cod_modular}-{datetime.now().strftime('%Y%m%dT%H%M%S')}",
         "cod_modular": cod_modular,
+        "institucion_id": cod_modular,
         "nombre_ie": nombre_ie,
+        "tipo_reporte": "REPORTE_INSTITUCIONAL_1",
+        "hito_asociado": "HITO_1_DIRECTIVO",
+        "version_evidencia": "V1",
         "fecha_generacion": datetime.now().isoformat(),
-        "niveles": secciones,
+        "n_docentes_total": n_docentes_total,
+        "n_evidencias_validas": n_evidencias_validas,
+        "n_evidencias_no_validas": estados["n_no_validas"],
+        "n_sin_entrega": estados["n_sin_entrega"],
+        "pct_cobertura": pct_cobertura,
+        "muestra_suficiente": muestra_suficiente,
+        "distribucion_por_aspecto": variables["distribucion_por_aspecto"],
+        "necesidades_frecuentes": variables["necesidades_frecuentes"],
+        "fortalezas": variables["fortalezas"],
+        "enfasis_lectura": enfasis_lectura,
+        "lectura_por_nivel": lectura_por_nivel,
+        "aspectos_contraste": aspectos_contraste,
+        "preguntas_rtc": preguntas_rtc,
+        "interpretaciones_por_aspecto": narrativas["interpretaciones"],
+        "sintesis_institucional": narrativas["sintesis_institucional"],
+        "identificacion_individual_incluida": False,
     }
 
 
@@ -950,21 +1338,21 @@ async def consultar_reporte_existente(userid: int) -> dict:
     él mismo (nunca toca el LLM). Cuatro situaciones:
 
       1. No hay reporte, y ya hay >= UMBRAL_MUESTRA_INSUFICIENTE docentes
-         evaluados SUMANDO LOS 3 NIVELES EDUCATIVOS -> accion="generar"
-         (el frontend llama a POST /reporte/generar automáticamente, sin
+         con evidencia válida en la IE completa -> accion="generar" (el
+         frontend llama a POST /reporte/generar automáticamente, sin
          botón visible).
-      2. Hay reporte, y el número de docentes evaluados (suma de niveles)
-         no cambió desde que se generó -> accion="mostrar", reporte
-         vigente tal cual.
-      3. Hay reporte, pero el número de docentes evaluados (suma de
-         niveles) cambió -> accion="generar" (el frontend dispara la
+      2. Hay reporte, y el número de docentes con evidencia válida no
+         cambió desde que se generó -> accion="mostrar", reporte vigente
+         tal cual.
+      3. Hay reporte, pero el número de docentes con evidencia válida
+         cambió -> accion="generar" (el frontend dispara la
          regeneración).
-      4. No hay reporte, y aún no se llega al mínimo de docentes (suma
-         de niveles) NI se cubrió el 100% de la plana docente de la IE
+      4. No hay reporte, y aún no se llega al mínimo de docentes
+         evaluados NI se cubrió el 100% de la plana docente de la IE
          completa -> accion="esperar_docentes". Si una IE ya evaluó a
          TODOS sus docentes (aunque sean menos de 5 en total), no tiene
          sentido esperar más -- se genera igual, marcado como
-         muestra_insuficiente en la(s) sección(es) que correspondan.
+         muestra_suficiente=False en el reporte.
 
     Retorna siempre {"accion": ..., "reporte": ... | None, "n_docentes_evaluados": ...}
     """
@@ -1049,7 +1437,7 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
     )
 
     if guardado is not None and guardado["estado"] == "generado":
-        filas_actuales = await obtener_filas_vista(nombre_ie, region, distrito)
+        filas_actuales = filas_validas(await obtener_filas_vista(nombre_ie, region, distrito))
         n_actual = len(agrupar_por_docente(filas_actuales))
         debe_generar = n_actual != guardado["n_docentes_evaluados"]
         if debe_generar:
@@ -1071,11 +1459,8 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
         except SinDatosDisponiblesError:
             await guardar_estado_reporte(cod_modular, "sin_datos", 0)
             raise
-        n_docentes_evaluados_total = sum(
-            seccion["n_docentes_evaluados"] for seccion in reporte["niveles"].values()
-        )
         id_reporte = await guardar_estado_reporte(
-            cod_modular, "generado", n_docentes_evaluados_total, reporte
+            cod_modular, "generado", reporte["n_evidencias_validas"], reporte
         )
 
     await registrar_consulta(cod_modular, userid, courseid, cmid, id_reporte)

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Reporte Institucional - Hito 1 Directivo</title>
+  <title>Reporte Institucional 1 - Sesiones de aprendizaje V1</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -18,7 +18,6 @@
       --gridline:       #e1e0d9;
       --baseline:       #c3c2b7;
       --border:         rgba(11, 11, 11, 0.10);
-
 
       --status-good:     #0ca30c;
       --status-warning:  #fab219;
@@ -244,16 +243,22 @@
     }
 
     /* ---------------------------------------------------------------------
-     * Secciones por nivel educativo (Inicial / Primaria / Secundaria),
-     * apiladas verticalmente en el mismo orden -- ver NIVEL_ORDEN en JS.
+     * Reporte institucional (11 secciones, un solo reporte por IE)
      * ------------------------------------------------------------------- */
-    .nivel-block {
-      margin-bottom: 40px;
-      padding-top: 8px;
+    .report-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      margin-bottom: 14px;
+    }
+    .btn-descargar-pdf {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }
 
-    /* Encabezado agregado solo en la captura del PDF (ver
-     * descargarNivelComoPDF) -- no se muestra en el dashboard en vivo. */
+    /* Encabezado agregado solo en la captura del PDF -- no se muestra en
+     * el dashboard en vivo (ver descargarReporteComoPDF). */
     .pdf-header {
       margin-bottom: 20px;
       padding-bottom: 14px;
@@ -271,73 +276,6 @@
       margin: 0;
       font-size: 0.95rem;
       color: var(--text-secondary);
-    }
-    .nivel-block + .nivel-block {
-      border-top: 2px solid var(--gridline);
-      padding-top: 32px;
-    }
-    .nivel-header {
-      display: flex;
-      align-items: baseline;
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-    .nivel-header h2 {
-      font-size: 1.15rem;
-      margin: 0;
-    }
-    .nivel-header .nivel-tag {
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-muted);
-      background: var(--gridline);
-      border-radius: 4px;
-      padding: 2px 8px;
-    }
-
-    /* ---------------------------------------------------------------------
-     * Pestañas de nivel educativo
-     * ------------------------------------------------------------------- */
-    .nivel-tabs {
-      display: flex;
-      gap: 4px;
-      border-bottom: 2px solid var(--gridline);
-      margin-bottom: 24px;
-    }
-    .nivel-tab-btn {
-      font-family: var(--font);
-      font-size: 0.9rem;
-      font-weight: 500;
-      padding: 10px 18px;
-      border: none;
-      background: transparent;
-      color: var(--text-secondary);
-      cursor: pointer;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -2px;
-    }
-    .nivel-tab-btn:hover { color: var(--text-primary); }
-    .nivel-tab-btn.active {
-      color: var(--brand-red);
-      border-bottom-color: var(--brand-red);
-      font-weight: 600;
-    }
-    .nivel-panel { display: none; }
-    .nivel-panel.active { display: block; }
-    .nivel-panel-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 14px;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    .btn-descargar-pdf {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
     }
 
     /* Estados de pantalla completa: acceso inválido / primera vez */
@@ -363,22 +301,73 @@
       background: var(--surface-1);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 16px;
-      margin-bottom: 16px;
+      padding: 20px;
+      margin-bottom: 18px;
     }
     .card h2 {
       font-size: 1rem;
-      margin: 0 0 12px;
+      margin: 0 0 14px;
       display: flex;
       align-items: center;
       gap: 8px;
     }
-    .card-header {
+    .card h3 {
+      font-size: 0.88rem;
+      margin: 18px 0 8px;
+      color: var(--text-secondary);
+    }
+    .card h3:first-of-type { margin-top: 0; }
+
+    /* Encabezado de sección con número en chip circular, en vez de
+     * "3. Interpretación..." como texto plano. */
+    .section-heading {
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 14px;
     }
-    .card-header h2 { margin: 0; }
+    .section-number {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--brand-red-light);
+      color: var(--brand-red);
+      font-size: 0.8rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .section-heading h2 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    /* Distingue el texto narrativo (prosa fluida: interpretaciones,
+     * énfasis, síntesis, cobertura) de las tablas con un acento tipo
+     * cita, para que se lea como contenido redactado, no como dato. */
+    .texto-reporte {
+      border-left: 3px solid var(--brand-red-light);
+      padding-left: 14px;
+    }
+
+    /* Celdas de porcentaje coloreadas según el nivel de la rúbrica, para
+     * que la lectura de la tabla de distribución sea más rápida que solo
+     * números en blanco y negro. */
+    .pct-cell {
+      display: inline-block;
+      min-width: 2.6em;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-weight: 600;
+      text-align: center;
+    }
+    .pct-cell.tone-necesita { background: rgba(var(--status-critical-rgb), 0.12); color: var(--status-critical); }
+    .pct-cell.tone-desarrollo { background: rgba(var(--status-warning-rgb), 0.18); color: var(--status-warning); }
+    .pct-cell.tone-favorable { background: rgba(var(--status-good-rgb), 0.14); color: var(--status-good); }
+    .pct-cell.tone-neutro { background: var(--page-plane); color: var(--text-secondary); font-weight: 500; }
 
     .stat-row {
       display: grid;
@@ -437,7 +426,7 @@
     }
     .purpose-banner .badge { flex-shrink: 0; }
 
-    .alert-list {
+    .bullet-list {
       list-style: none;
       margin: 0;
       padding: 0;
@@ -445,126 +434,12 @@
       flex-direction: column;
       gap: 8px;
     }
-    .alert-item {
-      display: flex;
-      gap: 10px;
+    .bullet-list li {
+      font-size: 0.85rem;
+      line-height: 1.5;
       padding: 10px 12px;
-      border-radius: 10px;
+      border-radius: 8px;
       background: var(--page-plane);
-      border-left: 3px solid var(--status-warning);
-    }
-    .alert-item.critical { border-left-color: var(--status-critical); }
-    .alert-item.good { border-left-color: var(--status-good); }
-    .alert-item .status-icon { margin-top: 1px; }
-    .alert-body { flex: 1; }
-    .alert-title { font-weight: 600; font-size: 0.88rem; }
-    .alert-detail { font-size: 0.82rem; color: var(--text-secondary); margin-top: 2px; }
-    .alert-accion { font-size: 0.78rem; color: var(--text-muted); margin-top: 4px; font-style: italic; }
-    .alert-modalidad {
-      display: inline-block;
-      font-size: 0.68rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.02em;
-      color: var(--text-muted);
-      margin-top: 6px;
-    }
-
-    .legend {
-      display: flex;
-      gap: 16px;
-      margin-bottom: 12px;
-      font-size: 0.8rem;
-      color: var(--text-secondary);
-      flex-wrap: wrap;
-    }
-    .legend-item { display: flex; align-items: center; gap: 6px; }
-    .legend-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
-
-    .criterios-legend {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      margin: 10px 0 0;
-      padding-top: 10px;
-      border-top: 1px dashed var(--gridline);
-    }
-    .criterio-legend-chip {
-      display: flex;
-      align-items: baseline;
-      flex-wrap: wrap;
-      gap: 5px;
-      font-size: 0.76rem;
-      color: var(--text-secondary);
-    }
-    .criterio-legend-nombre {
-      font-weight: 600;
-      color: var(--text-primary);
-    }
-    .criterio-legend-desc {
-      color: var(--text-muted);
-    }
-    .criterio-legend-id {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 18px;
-      height: 17px;
-      padding: 0 4px;
-      border-radius: 4px;
-      background: var(--brand-red-light);
-      color: var(--brand-red);
-      font-weight: 700;
-      font-size: 0.68rem;
-      flex-shrink: 0;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .criterios-chart {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .criterio-row {
-      display: grid;
-      grid-template-columns: 40px 1fr 40px;
-      align-items: center;
-      gap: 10px;
-    }
-    .criterio-label {
-      font-size: 0.78rem;
-      color: var(--text-secondary);
-      font-variant-numeric: tabular-nums;
-    }
-    .criterio-bar {
-      display: flex;
-      gap: 2px;
-      height: 20px;
-      background: var(--surface-1);
-      border-radius: 4px;
-      overflow: hidden;
-    }
-    .criterio-segment {
-      height: 100%;
-      min-width: 2px;
-      cursor: pointer;
-      transition: filter 120ms ease;
-    }
-    .criterio-segment:hover, .criterio-segment:focus-visible {
-      filter: brightness(1.12);
-      outline: none;
-    }
-    .criterio-segment:first-child { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
-    .criterio-segment:last-child { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
-    .seg-inicio  { background: var(--status-critical); }
-    .seg-proceso { background: var(--status-warning); }
-    .seg-logrado { background: var(--status-good); }
-
-    .criterio-value {
-      font-size: 0.78rem;
-      color: var(--text-secondary);
-      text-align: right;
-      font-variant-numeric: tabular-nums;
     }
 
     .data-table {
@@ -574,54 +449,23 @@
     }
     .data-table th, .data-table td {
       text-align: left;
-      padding: 6px 10px;
+      padding: 8px 10px;
       border-bottom: 1px solid var(--gridline);
       font-variant-numeric: tabular-nums;
     }
     .data-table th {
       color: var(--text-secondary);
       font-weight: 600;
-    }
-
-    .cards-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 16px;
-    }
-
-    .status-icon {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      font-size: 0.75rem;
-      color: #ffffff;
-      flex-shrink: 0;
-    }
-    .status-icon.good { background: var(--status-good); }
-    .status-icon.warning { background: var(--status-warning); }
-    .status-icon.critical { background: var(--status-critical); }
-
-    .chip-list {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .chip-list li {
-      display: flex;
-      justify-content: space-between;
-      font-size: 0.85rem;
-      padding: 6px 10px;
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
       background: var(--page-plane);
-      border-radius: 8px;
+      position: sticky;
+      top: 0;
     }
-    .chip-list .pct { font-weight: 600; font-variant-numeric: tabular-nums; }
-    .empty-note { color: var(--text-muted); font-size: 0.82rem; }
+    .data-table tbody tr:nth-child(even) { background: var(--page-plane); }
+    .data-table tbody tr:hover { background: var(--brand-red-light); }
+    .table-scroll { overflow-x: auto; max-height: 420px; overflow-y: auto; border-radius: 8px; }
 
     .texto-reporte {
       white-space: pre-line;
@@ -629,20 +473,9 @@
       line-height: 1.55;
       color: var(--text-primary);
     }
+    .texto-reporte + .texto-reporte { margin-top: 12px; }
 
-    .tooltip {
-      position: fixed;
-      z-index: 50;
-      background: var(--text-primary);
-      color: var(--surface-1);
-      font-size: 0.78rem;
-      padding: 6px 10px;
-      border-radius: 6px;
-      pointer-events: none;
-      max-width: 220px;
-    }
-    .tooltip strong { font-variant-numeric: tabular-nums; }
-
+    .empty-note { color: var(--text-muted); font-size: 0.82rem; }
     .muted { color: var(--text-muted); }
 
     /* ---------------------------------------------------------------------
@@ -673,12 +506,11 @@
     .ft-shield { color: var(--text-muted); flex-shrink: 0; }
 
     @media (max-width: 640px) {
-      .criterio-row { grid-template-columns: 32px 1fr 34px; }
       .app-header { padding: 0 12px; }
       .header-badge { display: none; }
     }
   </style>
-  <!-- Exportación de cada sección de nivel a PDF (descarga por nivel) -->
+  <!-- Exportación del reporte a PDF -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" defer></script>
 </head>
 <body>
@@ -687,8 +519,8 @@
       <img src="https://guias.servicios.gob.pe/static/archivos/gb3.svg" alt="Escudo Perú" width="26" height="26" />
     </div>
     <div class="header-title">
-      <h1>Reporte Institucional</h1>
-      <p>Hito 1 · Directivo</p>
+      <h1>Reporte Institucional 1</h1>
+      <p>Sesiones de aprendizaje V1 · Hito 1 Directivo</p>
     </div>
     <div class="header-badge"><span class="badge-dot"></span>En línea</div>
     <button id="theme-toggle" class="btn-header-ghost" aria-label="Cambiar tema claro/oscuro" title="Cambiar tema">🌓</button>
@@ -706,10 +538,10 @@
   <div class="app-shell">
     <section class="purpose-banner" aria-label="Propósito del instrumento">
       <p>
-        Reporte agregado institucional — <strong>Hito 1 (Directivo)</strong>. Sintetiza patrones
-        de la IE en la Sesión de aprendizaje V1: fortalezas predominantes, oportunidades de
-        mejora comunes y desafíos prioritarios. Es insumo del Diagnóstico institucional de
-        brechas y de la RTC 1 — no sustituye la conducción del análisis colegiado por el directivo.
+        Reporte Institucional 1 — <strong>Sesiones de aprendizaje V1</strong>. Reúne los resultados de las
+        Sesiones V1 evaluadas por el programa: qué se observa en cada aspecto, fortalezas identificadas y
+        necesidades de mejora que aparecen con mayor frecuencia. Es insumo del Diagnóstico institucional y de
+        la RTC 1 — no sustituye la conducción del análisis colegiado por el directivo.
       </p>
       <span class="badge good">Sin identificación docente individual</span>
     </section>
@@ -737,21 +569,24 @@
       <button id="btn-generar-primero" class="btn-primary">Reintentar</button>
     </section>
 
-    <!-- Aún no hay suficientes docentes evaluados; el backend no genera todavía (no consume LLM) -->
+    <!-- Aún no hay suficientes sesiones V1 válidas; el backend no genera todavía (no consume LLM) -->
     <section id="esperando-docentes" class="state-card" hidden>
       <div class="state-icon">👥</div>
-      <h2>Esperando evaluaciones docentes</h2>
+      <h2>Esperando Sesiones de aprendizaje V1</h2>
       <p id="esperando-docentes-text">
-        Aún no se alcanza el mínimo de docentes evaluados para generar el reporte institucional.
+        Aún no se alcanza el mínimo de sesiones V1 válidas para generar el reporte institucional.
       </p>
     </section>
 
     <main id="report-content" hidden>
-      <!-- Una sección completa por cada nivel educativo presente
-           (Inicial, Primaria, Secundaria), apiladas verticalmente.
-           Generadas dinámicamente por renderNiveles() en JS -- ver
-           NIVEL_TEMPLATE más abajo. -->
-      <div id="niveles-container"></div>
+      <div class="report-actions">
+        <button id="btn-descargar-pdf" class="btn-secondary btn-descargar-pdf">
+          <span aria-hidden="true">⬇</span> Descargar PDF
+        </button>
+      </div>
+      <!-- Las 11 secciones del reporte, generadas dinámicamente por
+           render() en JS -- ver renderReporte más abajo. -->
+      <div id="reporte-container"></div>
     </main>
   </div>
 
@@ -763,8 +598,6 @@
     </span>
     <div class="fl g"></div><div class="fl r"></div>
   </footer>
-
-  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
 
   <script>
 "use strict";
@@ -796,7 +629,7 @@ const CTX = {
 };
 
 // Debe coincidir con core.UMBRAL_MUESTRA_INSUFICIENTE del backend. Solo se
-// usa para el texto de progreso ("N de 5 docentes evaluados"); la decisión
+// usa para el texto de progreso ("N de 5 sesiones válidas"); la decisión
 // real siempre la toma el backend (accion="esperar_docentes" / 409).
 const UMBRAL_MUESTRA_INSUFICIENTE = 5;
 
@@ -819,8 +652,8 @@ const el = {
   statusBanner: document.getElementById("status-banner"),
   loading: document.getElementById("loading"),
   reportContent: document.getElementById("report-content"),
-  nivelesContainer: document.getElementById("niveles-container"),
-  tooltip: document.getElementById("tooltip"),
+  reporteContainer: document.getElementById("reporte-container"),
+  btnDescargarPdf: document.getElementById("btn-descargar-pdf"),
   themeToggle: document.getElementById("theme-toggle"),
 };
 
@@ -885,16 +718,16 @@ function showOnly(...visibleIds) {
   }
 }
 
-/* Muestra el estado "aún no hay suficientes docentes evaluados" — el
+/* Muestra el estado "aún no hay suficientes sesiones V1 válidas" — el
  * backend nunca llama al LLM en este caso (ni /consultar ni un intento de
  * /generar que reciba 409), así que no hay botón de reintento: el reporte
  * aparecerá solo cuando se alcance el mínimo. */
-function showEsperandoDocentes(nDocentesEvaluados) {
-  const n = nDocentesEvaluados ?? 0;
-  el.contextName.textContent = "Esperando evaluaciones docentes…";
+function showEsperandoDocentes(nEvidenciasValidas) {
+  const n = nEvidenciasValidas ?? 0;
+  el.contextName.textContent = "Esperando Sesiones de aprendizaje V1…";
   el.btnRefresh.hidden = true;
   el.esperandoDocentesText.textContent =
-    `Aún no se alcanza el mínimo de ${UMBRAL_MUESTRA_INSUFICIENTE} docentes evaluados para generar ` +
+    `Aún no se alcanza el mínimo de ${UMBRAL_MUESTRA_INSUFICIENTE} sesiones V1 válidas para generar ` +
     `el reporte institucional (${n} de ${UMBRAL_MUESTRA_INSUFICIENTE} hasta el momento). El reporte se ` +
     "generará automáticamente en cuanto se alcance el mínimo.";
   showOnly("esperando-docentes");
@@ -940,7 +773,7 @@ async function init() {
     }
 
     if (data.accion === "esperar_docentes") {
-      // Aún no llega al mínimo de docentes evaluados: NO se llama a
+      // Aún no llega al mínimo de sesiones V1 válidas: NO se llama a
       // generar (el backend gastaría una llamada al LLM sin necesidad).
       showEsperandoDocentes(data.n_docentes_evaluados);
       return;
@@ -1008,7 +841,7 @@ async function generarReporte() {
 
     if (err.status === 409) {
       // Muestra insuficiente: reintentar no sirve de nada hasta que haya
-      // más docentes evaluados. Se vuelve a consultar (endpoint liviano,
+      // más sesiones V1 válidas. Se vuelve a consultar (endpoint liviano,
       // no toca el LLM) solo para mostrar el progreso actual.
       let n;
       try {
@@ -1034,7 +867,7 @@ el.btnGenerarPrimero.addEventListener("click", () => {
 });
 
 /* Revisión de actualizaciones: barata cuando no cambió nada (el backend
- * solo vuelve a llamar al LLM si cambió n_docentes_evaluados). */
+ * solo vuelve a llamar al LLM si cambió el número de sesiones V1 válidas). */
 async function checkForUpdates(currentData) {
   if (!CTX.courseid || !CTX.cmid) return;
   el.refreshStatus.hidden = false;
@@ -1066,271 +899,78 @@ el.btnRefresh.addEventListener("click", () => {
 init();
 
 /* ---------------------------------------------------------------------
- * Render
+ * Render -- Reporte Institucional 1 (F4), 11 secciones fijas (ver
+ * docs_nuevos/1. FICHA TÉCNICA..., punto 10). Cada renderXxx() arma una
+ * sección a partir de los campos ya calculados que devuelve
+ * core.generar_reporte -- el frontend no recalcula nada, solo presenta.
  * ------------------------------------------------------------------- */
-/* Orden de despliegue de los niveles -- debe coincidir con
- * core.NIVELES_EDUCATIVOS del backend (Inicial, Primaria, Secundaria).
- * Solo se muestran los niveles que realmente vienen en data.niveles --
- * una IE puede tener 1, 2 o 3. */
-const NIVEL_ORDEN = ["Inicial", "Primaria", "Secundaria"];
-
-const NIVELES = [
-  { key: "pct_inicial", label: "Inicial", cls: "seg-inicio", swatch: "var(--status-critical)" },
-  { key: "pct_en_proceso", label: "En proceso", cls: "seg-proceso", swatch: "var(--status-warning)" },
-  { key: "pct_logrado", label: "Logrado", cls: "seg-logrado", swatch: "var(--status-good)" },
-];
-
 let lastRenderedData = null;
 
-/* data ahora es {cod_modular, nombre_ie, fecha_generacion, niveles: {...}}
- * -- se genera una pestaña por cada nivel presente en data.niveles, en
- * el orden fijo NIVEL_ORDEN (Inicial, Primaria, Secundaria). Solo se
- * muestra un panel a la vez; los niveles ausentes en esta IE
- * simplemente no generan pestaña. */
+const NIVEL_COLUMNAS = [
+  { key: "pct_inicio", label: "Inicio", tone: "tone-necesita" },
+  { key: "pct_en_desarrollo", label: "En desarrollo", tone: "tone-desarrollo" },
+  { key: "pct_logrado", label: "Logrado", tone: "tone-favorable" },
+  { key: "pct_destacado", label: "Destacado", tone: "tone-favorable" },
+  { key: "pct_inicio_en_desarrollo", label: "Inicio + En desarrollo", tone: "tone-neutro" },
+  { key: "pct_logrado_destacado", label: "Logrado + Destacado", tone: "tone-neutro" },
+];
+
+function sectionCard(titulo) {
+  const section = document.createElement("section");
+  section.className = "card";
+
+  const match = titulo.match(/^(\d+)\.\s*(.+)$/);
+  const h2 = document.createElement("h2");
+
+  if (match) {
+    const [, numero, resto] = match;
+    const heading = document.createElement("div");
+    heading.className = "section-heading";
+    const chip = document.createElement("span");
+    chip.className = "section-number";
+    chip.textContent = numero;
+    h2.textContent = resto;
+    heading.append(chip, h2);
+    section.appendChild(heading);
+  } else {
+    h2.textContent = titulo;
+    section.appendChild(h2);
+  }
+
+  return section;
+}
+
+function addBullet(list, texto) {
+  const li = document.createElement("li");
+  li.textContent = texto;
+  list.appendChild(li);
+}
+
+function emptyNote(container, texto) {
+  const p = document.createElement("p");
+  p.className = "empty-note";
+  p.textContent = texto;
+  container.appendChild(p);
+}
+
 function render(data) {
   lastRenderedData = data;
   el.contextName.textContent = data.nombre_ie || "—";
 
-  const container = document.getElementById("niveles-container");
-  container.replaceChildren();
-
-  const niveles = data.niveles || {};
-  const presentes = NIVEL_ORDEN.filter((n) => niveles[n]);
-
-  if (presentes.length === 0) {
-    const p = document.createElement("p");
-    p.className = "empty-note";
-    p.textContent = "No hay secciones de nivel educativo disponibles para esta IE.";
-    container.appendChild(p);
-    return;
-  }
-
-  const tabs = document.createElement("div");
-  tabs.className = "nivel-tabs";
-  tabs.setAttribute("role", "tablist");
-
-  const panels = document.createElement("div");
-  panels.className = "nivel-panels";
-
-  presentes.forEach((nivelNombre, idx) => {
-    const tabBtn = document.createElement("button");
-    tabBtn.className = "nivel-tab-btn" + (idx === 0 ? " active" : "");
-    tabBtn.textContent = nivelNombre;
-    tabBtn.setAttribute("role", "tab");
-    tabBtn.setAttribute("aria-selected", idx === 0 ? "true" : "false");
-    tabBtn.id = `tab-${nivelNombre.toLowerCase()}`;
-    tabBtn.setAttribute("aria-controls", `panel-${nivelNombre.toLowerCase()}`);
-
-    const panel = renderNivelBlock(nivelNombre, niveles[nivelNombre]);
-    panel.className = "nivel-panel" + (idx === 0 ? " active" : "");
-    panel.id = `panel-${nivelNombre.toLowerCase()}`;
-    panel.setAttribute("role", "tabpanel");
-    panel.setAttribute("aria-labelledby", tabBtn.id);
-
-    tabBtn.addEventListener("click", () => {
-      tabs.querySelectorAll(".nivel-tab-btn").forEach((b) => {
-        b.classList.remove("active");
-        b.setAttribute("aria-selected", "false");
-      });
-      panels.querySelectorAll(".nivel-panel").forEach((p) => p.classList.remove("active"));
-      tabBtn.classList.add("active");
-      tabBtn.setAttribute("aria-selected", "true");
-      panel.classList.add("active");
-    });
-
-    tabs.appendChild(tabBtn);
-    panels.appendChild(panel);
-  });
-
-  container.append(tabs, panels);
-}
-
-/* Arma el bloque completo (stat-row, alertas, gráfico de criterios,
- * listas, texto narrativo, botón de descarga PDF) para UN nivel
- * educativo. Cada sub-render recibe el contenedor específico de este
- * bloque, en vez de usar los `el.algo` fijos de una sola sección global. */
-function renderNivelBlock(nivelNombre, nivelData) {
-  const block = document.createElement("section");
-  block.className = "nivel-block";
-
-  const header = document.createElement("div");
-  header.className = "nivel-panel-header";
-  const h2 = document.createElement("h2");
-  h2.textContent = `Nivel ${nivelNombre}`;
-  h2.style.margin = "0";
-  h2.style.fontSize = "1.15rem";
-
-  const btnDescargar = document.createElement("button");
-  btnDescargar.className = "btn-secondary btn-descargar-pdf";
-  btnDescargar.innerHTML = `<span aria-hidden="true">⬇</span> Descargar PDF`;
-
-  header.append(h2, btnDescargar);
-  block.appendChild(header);
-
-  const statRow = document.createElement("section");
-  statRow.className = "stat-row";
-  renderStatRow(statRow, nivelData);
-  block.appendChild(statRow);
-
-  const cardAlertas = document.createElement("section");
-  cardAlertas.className = "card";
-  const h2Alertas = document.createElement("h2");
-  h2Alertas.textContent = "Alertas institucionales";
-  const subAlertas = document.createElement("div");
-  subAlertas.className = "subtitle";
-  subAlertas.style.marginBottom = "10px";
-  subAlertas.textContent =
-    "Puntos que requieren tu atención antes de la RTC 1. Cada alerta incluye una acción sugerida para el análisis con tus docentes.";
-  const listaAlertas = document.createElement("ul");
-  listaAlertas.className = "alert-list";
-  cardAlertas.append(h2Alertas, subAlertas, listaAlertas);
-  renderAlertas(listaAlertas, nivelData);
-  block.appendChild(cardAlertas);
-
-  const cardCriterios = document.createElement("section");
-  cardCriterios.className = "card";
-  const headerCriterios = document.createElement("div");
-  headerCriterios.className = "card-header";
-  const h2Criterios = document.createElement("h2");
-  h2Criterios.textContent = "Distribución por criterio";
-  const toggleBtn = document.createElement("button");
-  toggleBtn.className = "btn-ghost btn-sm";
-  toggleBtn.textContent = "Ver como tabla";
-  headerCriterios.append(h2Criterios, toggleBtn);
-  const legend = document.createElement("div");
-  legend.className = "legend";
-  const chart = document.createElement("div");
-  chart.className = "criterios-chart";
-  const tableWrap = document.createElement("div");
-  tableWrap.hidden = true;
-  const table = document.createElement("table");
-  table.className = "data-table";
-  tableWrap.appendChild(table);
-  const criteriosLegend = document.createElement("div");
-  criteriosLegend.className = "criterios-legend";
-  cardCriterios.append(headerCriterios, legend, chart, tableWrap, criteriosLegend);
-  renderLegend(legend);
-  renderCriteriosChart(chart, nivelData.distribucion_por_criterio || []);
-  renderCriteriosTable(table, nivelData.distribucion_por_criterio || []);
-  renderCriteriosLegend(criteriosLegend);
-  toggleBtn.addEventListener("click", () => {
-    const showingTable = !tableWrap.hidden;
-    tableWrap.hidden = showingTable;
-    chart.hidden = !showingTable;
-    legend.hidden = !showingTable;
-    toggleBtn.textContent = showingTable ? "Ver como tabla" : "Ver como gráfico";
-  });
-  block.appendChild(cardCriterios);
-
-  const cardsGrid = document.createElement("section");
-  cardsGrid.className = "cards-grid";
-
-  const cardFortalezas = document.createElement("div");
-  cardFortalezas.className = "card";
-  cardFortalezas.innerHTML = `<h2><span class="status-icon good">&#10003;</span> Fortalezas predominantes</h2>`;
-  const listaFortalezas = document.createElement("ul");
-  listaFortalezas.className = "chip-list";
-  cardFortalezas.appendChild(listaFortalezas);
-  renderListaSimple(listaFortalezas, nivelData.fortalezas_predominantes);
-
-  const cardOportunidades = document.createElement("div");
-  cardOportunidades.className = "card";
-  cardOportunidades.innerHTML = `<h2><span class="status-icon warning">!</span> Oportunidades de mejora</h2>`;
-  const listaOportunidades = document.createElement("ul");
-  listaOportunidades.className = "chip-list";
-  cardOportunidades.appendChild(listaOportunidades);
-  renderListaSimple(listaOportunidades, nivelData.oportunidades_comunes);
-
-  const cardDesafios = document.createElement("div");
-  cardDesafios.className = "card";
-  cardDesafios.innerHTML = `<h2><span class="status-icon critical">&#10005;</span> Desafíos prioritarios</h2>`;
-  const listaDesafios = document.createElement("ul");
-  listaDesafios.className = "chip-list";
-  cardDesafios.appendChild(listaDesafios);
-  renderListaDesafios(listaDesafios, nivelData.desafios_prioritarios);
-
-  cardsGrid.append(cardFortalezas, cardOportunidades, cardDesafios);
-  block.appendChild(cardsGrid);
-
-  const cardTexto = document.createElement("section");
-  cardTexto.className = "card";
-  const h2Texto = document.createElement("h2");
-  h2Texto.textContent = "Reporte narrativo";
-  const textoDiv = document.createElement("div");
-  textoDiv.className = "texto-reporte";
-  textoDiv.textContent = nivelData.texto_reporte || "";
-  cardTexto.append(h2Texto, textoDiv);
-  block.appendChild(cardTexto);
-
-  btnDescargar.addEventListener("click", () => {
-    descargarNivelComoPDF(block, nivelNombre, btnDescargar);
-  });
-
-  return block;
-}
-
-/* Exporta el bloque completo de un nivel (stat-row, alertas, gráfico,
- * listas, texto narrativo) a PDF usando html2pdf.js, cargada vía CDN
- * con `defer` en <head>. Excluye el propio botón de descarga del PDF
- * generado (se oculta temporalmente durante la captura). */
-function descargarNivelComoPDF(blockEl, nivelNombre, btnEl) {
-  if (typeof html2pdf === "undefined") {
-    console.error("html2pdf.js no cargó todavía; reintenta en un momento.");
-    return;
-  }
-
-  const nombreArchivo = `reporte_${(lastRenderedData?.nombre_ie || "IE").replace(/[^\w]+/g, "_")}_${nivelNombre}.pdf`;
-
-  const textoOriginal = btnEl.textContent;
-  btnEl.disabled = true;
-  btnEl.textContent = "Generando PDF…";
-  btnEl.style.visibility = "hidden"; // no aparece en la captura del PDF
-
-  /* Colchón temporal: un wrapper con un poco de padding invisible
-   * alrededor del bloque, para que el borde de las tarjetas nunca caiga
-   * justo en el límite redondeado del canvas de html2canvas (eso era lo
-   * que recortaba el borde derecho al exportar). Se restaura al terminar. */
-  const parent = blockEl.parentNode;
-  const nextSibling = blockEl.nextSibling;
-  const buffer = document.createElement("div");
-  buffer.style.padding = "4px";
-  parent.insertBefore(buffer, blockEl);
-
-  /* Encabezado del reporte: solo aparece en el PDF exportado, no en el
-   * dashboard en vivo (que ya tiene su propio header institucional). */
-  const pdfHeader = document.createElement("div");
-  pdfHeader.className = "pdf-header";
-  const pdfTitle = document.createElement("h1");
-  pdfTitle.textContent = "Reporte institucional";
-  const pdfSubtitle = document.createElement("p");
-  pdfSubtitle.textContent = `${lastRenderedData?.nombre_ie || "—"} · Nivel ${nivelNombre}`;
-  pdfHeader.append(pdfTitle, pdfSubtitle);
-  buffer.appendChild(pdfHeader);
-
-  buffer.appendChild(blockEl);
-
-  html2pdf()
-    .set({
-      margin: 10,
-      filename: nombreArchivo,
-      image: { type: "jpeg", quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-      pagebreak: { mode: ["avoid-all", "css", "legacy"] },
-    })
-    .from(buffer)
-    .save()
-    .catch((err) => {
-      console.error("Fallo al generar el PDF:", err);
-      alert("No se pudo generar el PDF. Intenta nuevamente en unos segundos.");
-    })
-    .finally(() => {
-      parent.insertBefore(blockEl, nextSibling);
-      buffer.remove();
-      btnEl.disabled = false;
-      btnEl.textContent = textoOriginal;
-      btnEl.style.visibility = "visible";
-    });
+  el.reporteContainer.replaceChildren(
+    renderEncabezado(data),
+    renderPanoramaGeneral(data),
+    renderResultadoGeneral(data),
+    renderInterpretacion(data),
+    renderEnfasis(data),
+    renderNecesidades(data),
+    renderFortalezas(data),
+    renderLecturaPorNivel(data),
+    renderContraste(data),
+    renderPreguntasRTC(data),
+    renderSintesis(data),
+    renderCobertura(data),
+  );
 }
 
 function statTile(label, value, opts = {}) {
@@ -1357,250 +997,93 @@ function statTile(label, value, opts = {}) {
   return tile;
 }
 
-function renderStatRow(container, data) {
-  container.replaceChildren();
+/* "Reporte general de la institución" (encabezado, ficha técnica punto 10) */
+function renderEncabezado(data) {
+  const section = sectionCard("Datos de la institución");
 
-  container.appendChild(statTile("Docentes retroalimentados", data.n_docentes_evaluados ?? "—"));
-  container.appendChild(statTile("Docentes totales", data.n_docentes_total ?? "—"));
+  const statRow = document.createElement("div");
+  statRow.className = "stat-row";
+
+  statRow.appendChild(statTile("Sesiones V1 válidas", data.n_evidencias_validas ?? "—"));
+  statRow.appendChild(statTile("Docentes registrados", data.n_docentes_total ?? "—"));
 
   const pctCobertura = data.pct_cobertura ?? 0;
-  container.appendChild(
+  statRow.appendChild(
     statTile("Cobertura", `${pctCobertura}%`, {
       badge:
         pctCobertura < 70
-          ? { tone: "critical", text: "< 70% · umbral RTC 1" }
-          : { tone: "good", text: "ok" },
+          ? { tone: "critical", text: "< 70%" }
+          : pctCobertura < 100
+            ? { tone: "warning", text: "70-99%" }
+            : { tone: "good", text: "100%" },
     })
   );
 
   const fecha = data.fecha_generacion
     ? new Date(data.fecha_generacion).toLocaleString("es-PE", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
+        day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
       })
     : "—";
-  container.appendChild(statTile("Última actualización", fecha, { small: true }));
+  statRow.appendChild(statTile("Fecha de corte", fecha, { small: true }));
+
+  section.appendChild(statRow);
+  return section;
 }
 
-/* ---------------------------------------------------------------------
- * Alertas institucionales (Ficha técnica, sección 8)
- * ------------------------------------------------------------------- */
-function computeAlertas(data) {
-  const alertas = [];
-  const pctCobertura = data.pct_cobertura ?? 0;
+/* "1. Panorama general" */
+function renderPanoramaGeneral(data) {
+  const section = sectionCard("1. Panorama general");
+  const ul = document.createElement("ul");
+  ul.className = "bullet-list";
 
-  if (pctCobertura < 70) {
-    alertas.push({
-      level: "warning",
-      title: `Cobertura insuficiente al cierre del plazo (${pctCobertura}%)`,
-      detail: "Riesgo de que la RTC 1 se realice sin insumo institucional suficiente.",
-      accion:
-        "Dinamización dirigida a los docentes de la IE pendientes de entrega, antes de la fecha de RTC 1.",
-      modalidad: "Dinamización pedagógica",
-    });
+  addBullet(
+    ul,
+    `${data.n_evidencias_validas ?? 0} de ${data.n_docentes_total ?? 0} docentes cuentan con una Sesión V1 válida (${data.pct_cobertura ?? 0}% de cobertura).`
+  );
+
+  const distribucion = data.distribucion_por_aspecto || [];
+  if (distribucion.length) {
+    const masAtencion = [...distribucion].sort((a, b) => b.pct_inicio_en_desarrollo - a.pct_inicio_en_desarrollo)[0];
+    addBullet(
+      ul,
+      `El aspecto que requiere mayor atención entre las sesiones revisadas es "${masAtencion.nombre}", con ${masAtencion.pct_inicio_en_desarrollo}% en Inicio o En desarrollo.`
+    );
   }
 
-  if ((data.fortalezas_predominantes || []).length === 0) {
-    alertas.push({
-      level: "critical",
-      title: "Sin fortalezas predominantes",
-      detail:
-        "La IE no muestra ningún criterio consolidado como fortaleza: posible necesidad de una RTC 1 más desafiante de lo habitual.",
-      accion:
-        "Visibilizar el hallazgo al Especialista Pedagógico antes de la RTC 1 para preparar una ROP con el directivo reforzado.",
-      modalidad: "ROP con el directivo",
-    });
+  const fortalezas = data.fortalezas || [];
+  if (fortalezas.length) {
+    const top = [...fortalezas].sort((a, b) => b.pct - a.pct)[0];
+    addBullet(ul, `Como fortaleza, "${top.nombre}" alcanza ${top.pct}% en Logrado o Destacado.`);
+  } else {
+    addBullet(ul, "Ningún aspecto alcanzó todavía el umbral de fortaleza en las sesiones revisadas.");
   }
 
-  for (const d of data.desafios_prioritarios || []) {
-    if (d.tipo === "brecha" && d.pct >= 50) {
-      alertas.push({
-        level: "warning",
-        title: `Brecha ${d.id} extendida (${d.pct}% de las entregas)`,
-        detail: "Necesidad formativa compartida y extendida en la institución.",
-        accion: "Considerar ROP focalizada por clúster.",
-        modalidad: "Formativa focalizada por clúster",
-      });
-    }
+  const necesidades = data.necesidades_frecuentes || [];
+  if (necesidades.length) {
+    const top = necesidades[0];
+    addBullet(ul, `La necesidad de mejora que aparece con mayor frecuencia es "${top.nombre}" (${top.pct}% de las sesiones).`);
   }
 
-  if (data.muestra_insuficiente) {
-    alertas.push({
-      level: "critical",
-      title: `Muestra insuficiente (${data.n_docentes_evaluados ?? 0} docente(s) evaluado(s))`,
-      detail: "El reporte no tiene base suficiente para sustentar decisiones institucionales firmes.",
-      accion: "Complementar el diagnóstico con otras fuentes (MPE, ENLA) antes de la RTC 1.",
-      modalidad: "Orienta al directivo",
-    });
+  if (!data.muestra_suficiente) {
+    addBullet(ul, "La cantidad de sesiones válidas es reducida: estos resultados deben leerse con prudencia, sin generalizar a toda la institución.");
   }
 
-  return alertas;
+  section.appendChild(ul);
+  return section;
 }
 
-const STATUS_ICON_GLYPH = { good: "✓", warning: "!", critical: "✕" };
-
-function renderAlertas(listaEl, data) {
-  listaEl.replaceChildren();
-  const alertas = computeAlertas(data);
-
-  if (alertas.length === 0) {
-    const li = document.createElement("li");
-    li.className = "alert-item good";
-
-    const icon = document.createElement("span");
-    icon.className = "status-icon good";
-    icon.textContent = STATUS_ICON_GLYPH.good;
-
-    const body = document.createElement("div");
-    body.className = "alert-body";
-    const title = document.createElement("div");
-    title.className = "alert-title";
-    title.textContent = "Sin alertas institucionales activas para esta IE.";
-    body.appendChild(title);
-
-    li.append(icon, body);
-    listaEl.appendChild(li);
-    return;
-  }
-
-  for (const a of alertas) {
-    const li = document.createElement("li");
-    li.className = `alert-item ${a.level}`;
-
-    const icon = document.createElement("span");
-    icon.className = `status-icon ${a.level}`;
-    icon.textContent = STATUS_ICON_GLYPH[a.level] || "!";
-
-    const body = document.createElement("div");
-    body.className = "alert-body";
-
-    const title = document.createElement("div");
-    title.className = "alert-title";
-    title.textContent = a.title;
-
-    const detail = document.createElement("div");
-    detail.className = "alert-detail";
-    detail.textContent = a.detail;
-
-    const accion = document.createElement("div");
-    accion.className = "alert-accion";
-    accion.textContent = `Acción sugerida: ${a.accion}`;
-
-    const modalidad = document.createElement("div");
-    modalidad.className = "alert-modalidad";
-    modalidad.textContent = a.modalidad;
-
-    body.append(title, detail, accion, modalidad);
-    li.append(icon, body);
-    listaEl.appendChild(li);
-  }
-}
-
-function renderLegend(legendEl) {
-  legendEl.replaceChildren();
-  for (const nivel of NIVELES) {
-    const item = document.createElement("div");
-    item.className = "legend-item";
-
-    const swatch = document.createElement("span");
-    swatch.className = "legend-swatch";
-    swatch.style.background = nivel.swatch;
-
-    const label = document.createElement("span");
-    label.textContent = nivel.label;
-
-    item.append(swatch, label);
-    legendEl.appendChild(item);
-  }
-}
-
-/* Referencia de los 5 criterios (C1-C5) evaluados en la Sesión de
- * aprendizaje V1 -- debe coincidir con core.CRITERIOS del backend.
- * Mismo texto por nivel: los criterios son los mismos sin importar
- * si la sección es de Inicial, Primaria o Secundaria. */
-const CRITERIOS = [
-  { id: "C1", nombre: "Coherencia propósito–desafíos", que_evalua: "Que la sesión responda a los desafíos identificados en el diagnóstico previo (MPE/ENLA/evidencias de aula), no a un formato genérico." },
-  { id: "C2", nombre: "Situación significativa", que_evalua: "Que la situación de aprendizaje esté orientada al desarrollo de competencias y pensamiento crítico, no solo a completar actividades." },
-  { id: "C3", nombre: "Demanda cognitiva de las actividades", que_evalua: "Que las actividades propuestas exijan análisis, toma de decisiones o argumentación, no solo participación." },
-  { id: "C4", nombre: "Mediación y evaluación formativa", que_evalua: "Que las estrategias de mediación y los criterios de evaluación formativa sean coherentes entre sí y con el propósito." },
-  { id: "C5", nombre: "Uso pertinente de recursos y espacios", que_evalua: "Que los recursos y espacios educativos elegidos respondan a una decisión pedagógica, no a disponibilidad." },
-];
-
-function renderCriteriosLegend(container) {
-  container.replaceChildren();
-  for (const c of CRITERIOS) {
-    const chip = document.createElement("div");
-    chip.className = "criterio-legend-chip";
-
-    const idSpan = document.createElement("span");
-    idSpan.className = "criterio-legend-id";
-    idSpan.textContent = c.id;
-
-    const nombreSpan = document.createElement("span");
-    nombreSpan.className = "criterio-legend-nombre";
-    nombreSpan.textContent = `(${c.nombre}):`;
-
-    const descSpan = document.createElement("span");
-    descSpan.className = "criterio-legend-desc";
-    descSpan.textContent = `Evalúa ${c.que_evalua.charAt(0).toLowerCase() + c.que_evalua.slice(1)}`;
-
-    chip.append(idSpan, nombreSpan, descSpan);
-    container.appendChild(chip);
-  }
-}
-
-function renderCriteriosChart(chartEl, criterios) {
-  chartEl.replaceChildren();
-
-  for (const c of criterios) {
-    const row = document.createElement("div");
-    row.className = "criterio-row";
-
-    const label = document.createElement("div");
-    label.className = "criterio-label";
-    label.textContent = c.criterio_id;
-
-    const bar = document.createElement("div");
-    bar.className = "criterio-bar";
-
-    for (const nivel of NIVELES) {
-      const pct = c[nivel.key] ?? 0;
-      if (pct <= 0) continue;
-      const seg = document.createElement("div");
-      seg.className = `criterio-segment ${nivel.cls}`;
-      seg.style.width = `${pct}%`;
-      seg.tabIndex = 0;
-      seg.setAttribute("role", "img");
-      seg.setAttribute("aria-label", `${c.criterio_id} — ${nivel.label}: ${pct}%`);
-
-      const showTip = (evt) => showTooltip(evt, `${c.criterio_id} · ${nivel.label}`, `${pct}%`);
-      seg.addEventListener("pointermove", showTip);
-      seg.addEventListener("pointerenter", showTip);
-      seg.addEventListener("focus", (evt) => showTooltip(evt, `${c.criterio_id} · ${nivel.label}`, `${pct}%`, true));
-      seg.addEventListener("pointerleave", hideTooltip);
-      seg.addEventListener("blur", hideTooltip);
-
-      bar.appendChild(seg);
-    }
-
-    const value = document.createElement("div");
-    value.className = "criterio-value";
-    value.textContent = `${c.pct_logrado ?? 0}%`;
-
-    row.append(label, bar, value);
-    chartEl.appendChild(row);
-  }
-}
-
-function renderCriteriosTable(table, criterios) {
-  table.replaceChildren();
+/* Arma la tabla de distribución (4 niveles + agrupados) para una lista
+ * de aspectos -- reutilizada por "Resultado general" y "Lectura por
+ * nivel". */
+function tablaDistribucion(distribucion) {
+  const wrap = document.createElement("div");
+  wrap.className = "table-scroll";
+  const table = document.createElement("table");
+  table.className = "data-table";
 
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
-  for (const h of ["Criterio", "% Inicial", "% En proceso", "% Logrado"]) {
+  for (const h of ["Aspecto revisado", ...NIVEL_COLUMNAS.map((c) => c.label)]) {
     const th = document.createElement("th");
     th.textContent = h;
     headRow.appendChild(th);
@@ -1608,96 +1091,314 @@ function renderCriteriosTable(table, criterios) {
   thead.appendChild(headRow);
 
   const tbody = document.createElement("tbody");
-  for (const c of criterios) {
+  for (const c of distribucion) {
     const tr = document.createElement("tr");
-    for (const val of [c.criterio_id, `${c.pct_inicial}%`, `${c.pct_en_proceso}%`, `${c.pct_logrado}%`]) {
+    const tdNombre = document.createElement("td");
+    tdNombre.textContent = c.nombre;
+    tr.appendChild(tdNombre);
+    for (const col of NIVEL_COLUMNAS) {
       const td = document.createElement("td");
-      td.textContent = val;
+      const pill = document.createElement("span");
+      pill.className = `pct-cell ${col.tone}`;
+      pill.textContent = `${c[col.key] ?? 0}%`;
+      td.appendChild(pill);
       tr.appendChild(td);
     }
     tbody.appendChild(tr);
   }
 
   table.append(thead, tbody);
+  wrap.appendChild(table);
+  return wrap;
 }
 
-/* El toggle tabla/gráfico ahora se agrega dinámicamente por cada bloque
- * de nivel dentro de renderNivelBlock() -- no hay un único botón fijo. */
+/* "2. Resultado general obtenido de la evaluación de las sesiones entregadas" */
+function renderResultadoGeneral(data) {
+  const section = sectionCard("2. Resultado general obtenido de la evaluación de las sesiones entregadas");
+  const distribucion = data.distribucion_por_aspecto || [];
+  if (!distribucion.length) {
+    emptyNote(section, "Sin datos de distribución disponibles.");
+    return section;
+  }
+  section.appendChild(tablaDistribucion(distribucion));
 
-function renderListaSimple(container, items) {
-  container.replaceChildren();
-  if (!items || items.length === 0) {
-    const li = document.createElement("li");
-    li.className = "empty-note";
-    li.textContent = "Sin elementos en esta categoría.";
-    container.appendChild(li);
-    return;
-  }
-  for (const item of items) {
-    const li = document.createElement("li");
-    const idSpan = document.createElement("span");
-    idSpan.textContent = `Criterio ${item.id}`;
-    const pctSpan = document.createElement("span");
-    pctSpan.className = "pct";
-    pctSpan.textContent = `${item.pct}%`;
-    li.append(idSpan, pctSpan);
-    container.appendChild(li);
-  }
+  const nota = document.createElement("p");
+  nota.className = "empty-note";
+  nota.style.marginTop = "10px";
+  nota.textContent =
+    '"Inicio + En desarrollo" reúne las sesiones que todavía requieren mayor fortalecimiento en ese aspecto; ' +
+    '"Logrado + Destacado" reúne las que muestran un desempeño favorable. Estas expresiones no constituyen ' +
+    "nuevos niveles de evaluación.";
+  section.appendChild(nota);
+  return section;
 }
 
-function renderListaDesafios(container, desafios) {
-  container.replaceChildren();
-  desafios = desafios || [];
-  if (desafios.length === 0) {
-    const li = document.createElement("li");
-    li.className = "empty-note";
-    li.textContent = "Sin desafíos prioritarios identificados.";
-    container.appendChild(li);
+/* "3. Interpretación y análisis de los resultados obtenidos" */
+function renderInterpretacion(data) {
+  const section = sectionCard("3. Interpretación y análisis de los resultados obtenidos");
+  const distribucion = data.distribucion_por_aspecto || [];
+  const interpretaciones = data.interpretaciones_por_aspecto || {};
+
+  if (!distribucion.length) {
+    emptyNote(section, "Sin interpretación disponible.");
+    return section;
+  }
+
+  for (const c of distribucion) {
+    const texto = interpretaciones[c.criterio_id];
+    if (!texto) continue;
+    const h3 = document.createElement("h3");
+    h3.textContent = c.nombre;
+    const p = document.createElement("div");
+    p.className = "texto-reporte";
+    p.textContent = texto;
+    section.append(h3, p);
+  }
+  return section;
+}
+
+/* "4. Énfasis del programa" */
+function renderEnfasis(data) {
+  const section = sectionCard("4. Énfasis del programa");
+  const enfasis = data.enfasis_lectura || [];
+  if (!enfasis.length) {
+    emptyNote(section, "Sin información de énfasis disponible.");
+    return section;
+  }
+  for (const e of enfasis) {
+    const h3 = document.createElement("h3");
+    h3.textContent = e.enfasis;
+    const p = document.createElement("div");
+    p.className = "texto-reporte";
+    p.textContent = e.texto_permitido;
+    section.append(h3, p);
+  }
+  return section;
+}
+
+function tablaSimple(section, columnas, filas, vacioTexto) {
+  if (!filas.length) {
+    emptyNote(section, vacioTexto);
     return;
   }
-  for (const d of desafios) {
-    const li = document.createElement("li");
-    if (d.tipo === "brecha" && d.pct >= 50) li.title = "Brecha extendida (≥ 50%): ver panel de alertas";
-    const idSpan = document.createElement("span");
-    idSpan.textContent = d.tipo === "brecha" ? `Brecha ${d.id}` : `Criterio ${d.id}`;
-    const pctSpan = document.createElement("span");
-    pctSpan.className = "pct";
-    if (d.tipo === "brecha" && d.pct >= 50) pctSpan.style.color = "var(--status-critical)";
-    pctSpan.textContent = `${d.pct}%`;
-    li.append(idSpan, pctSpan);
-    container.appendChild(li);
+  const wrap = document.createElement("div");
+  wrap.className = "table-scroll";
+  const table = document.createElement("table");
+  table.className = "data-table";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const c of columnas) {
+    const th = document.createElement("th");
+    th.textContent = c.label;
+    headRow.appendChild(th);
   }
+  thead.appendChild(headRow);
+
+  const tbody = document.createElement("tbody");
+  for (const fila of filas) {
+    const tr = document.createElement("tr");
+    for (const c of columnas) {
+      const td = document.createElement("td");
+      td.textContent = c.render ? c.render(fila) : fila[c.key];
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.append(thead, tbody);
+  wrap.appendChild(table);
+  section.appendChild(wrap);
+}
+
+/* "5. Necesidades de mejora que aparecen con mayor frecuencia" */
+function capitalizar(texto) {
+  if (!texto) return "";
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
+
+function renderNecesidades(data) {
+  const section = sectionCard("5. Necesidades de mejora que aparecen con mayor frecuencia");
+  tablaSimple(
+    section,
+    [
+      { label: "Aspecto que requiere mayor atención", key: "nombre" },
+      { label: "Número de sesiones", key: "n" },
+      { label: "Porcentaje", render: (f) => `${f.pct}%` },
+      { label: "Qué se observa con mayor frecuencia", render: (f) => capitalizar(f.manifestacion) },
+    ],
+    data.necesidades_frecuentes || [],
+    "Sin necesidades de mejora frecuentes identificadas en las sesiones revisadas."
+  );
+  return section;
+}
+
+/* "6. Principales fortalezas identificadas" */
+function renderFortalezas(data) {
+  const section = sectionCard("6. Principales fortalezas identificadas");
+  tablaSimple(
+    section,
+    [
+      { label: "Fortaleza", key: "nombre" },
+      { label: "Número de sesiones", key: "n" },
+      { label: "Porcentaje en Logrado o Destacado", render: (f) => `${f.pct}%` },
+      { label: "Evidencia encontrada", render: (f) => capitalizar(f.manifestacion) },
+    ],
+    data.fortalezas || [],
+    "Ningún aspecto alcanzó todavía el umbral de fortaleza en las sesiones revisadas."
+  );
+  return section;
+}
+
+/* "7. Lectura diferenciada por nivel educativo" */
+function renderLecturaPorNivel(data) {
+  const section = sectionCard("7. Lectura diferenciada por nivel educativo");
+  const lectura = data.lectura_por_nivel || [];
+  if (!lectura.length) {
+    emptyNote(section, "No se dispone de información suficiente para una lectura diferenciada por nivel.");
+    return section;
+  }
+  for (const nivel of lectura) {
+    const h3 = document.createElement("h3");
+    h3.textContent = `${nivel.nivel_educativo} (${nivel.n} sesiones V1 válidas)`;
+    section.appendChild(h3);
+    if (nivel.muestra_insuficiente) {
+      const nota = document.createElement("p");
+      nota.className = "empty-note";
+      nota.textContent = "Menos de 5 sesiones válidas en este nivel: interpretar con prudencia, sin generalizar.";
+      section.appendChild(nota);
+    }
+    section.appendChild(tablaDistribucion(nivel.distribucion_por_aspecto || []));
+  }
+  const nota = document.createElement("p");
+  nota.className = "empty-note";
+  nota.style.marginTop = "10px";
+  nota.textContent = "Esta lectura no establece comparaciones de calidad ni rankings entre niveles.";
+  section.appendChild(nota);
+  return section;
+}
+
+/* "8. Lo que conviene contrastar con otras evidencias" */
+function renderContraste(data) {
+  const section = sectionCard("8. Lo que conviene contrastar con otras evidencias");
+  tablaSimple(
+    section,
+    [
+      { label: "Información que aporta este reporte", key: "hallazgo" },
+      { label: "Conviene revisar también", key: "fuente_sugerida" },
+      { label: "Para comprender mejor", key: "pregunta" },
+    ],
+    data.aspectos_contraste || [],
+    "Sin aspectos de contraste disponibles."
+  );
+  return section;
+}
+
+/* "9. Preguntas movilizadoras para preparar la RTC 1" */
+function renderPreguntasRTC(data) {
+  const section = sectionCard("9. Preguntas movilizadoras para preparar la RTC 1");
+  const preguntas = data.preguntas_rtc || [];
+  if (!preguntas.length) {
+    emptyNote(section, "Sin preguntas movilizadoras disponibles.");
+    return section;
+  }
+  const ul = document.createElement("ul");
+  ul.className = "bullet-list";
+  for (const p of preguntas) addBullet(ul, p);
+  section.appendChild(ul);
+  return section;
+}
+
+/* "10. Síntesis del análisis para el Diagnóstico institucional" */
+function renderSintesis(data) {
+  const section = sectionCard("10. Síntesis del análisis para el Diagnóstico institucional");
+  const p = document.createElement("div");
+  p.className = "texto-reporte";
+  p.textContent = data.sintesis_institucional || "Sin síntesis disponible.";
+  section.appendChild(p);
+  return section;
+}
+
+/* "11. Información sobre la cobertura de este reporte" */
+function renderCobertura(data) {
+  const section = sectionCard("11. Información sobre la cobertura de este reporte");
+  const p = document.createElement("div");
+  p.className = "texto-reporte";
+  p.textContent =
+    `El reporte se elaboró con ${data.n_evidencias_validas ?? 0} Sesiones V1 válidas, ` +
+    `${data.n_evidencias_no_validas ?? 0} no válidas y ${data.n_sin_entrega ?? 0} sin entrega, ` +
+    `de un total de ${data.n_docentes_total ?? 0} docentes registrados. La información presentada es institucional y agregada.` +
+    "No se identifican docentes ni se establecen comparaciones individuales."+
+    "El propósito es aportar elementos para comprender la situación pedagógica de la institución y orientar el análisis que realizará el equipo directivo.";
+  section.appendChild(p);
+  return section;
 }
 
 /* ---------------------------------------------------------------------
- * Tooltip (hover + keyboard focus)
+ * Descarga del reporte completo a PDF (html2pdf.js, cargada vía CDN con
+ * `defer` en <head>). Excluye el propio botón de descarga (se oculta
+ * temporalmente durante la captura).
  * ------------------------------------------------------------------- */
-function showTooltip(evt, title, value, isFocus = false) {
-  el.tooltip.replaceChildren();
+el.btnDescargarPdf.addEventListener("click", () => {
+  descargarReporteComoPDF(el.reporteContainer, el.btnDescargarPdf);
+});
 
-  const strong = document.createElement("strong");
-  strong.textContent = value;
-  const label = document.createElement("div");
-  label.textContent = title;
-
-  el.tooltip.append(strong, label);
-  el.tooltip.hidden = false;
-
-  let x, y;
-  if (isFocus) {
-    const rect = evt.target.getBoundingClientRect();
-    x = rect.left + rect.width / 2;
-    y = rect.top;
-  } else {
-    x = evt.clientX;
-    y = evt.clientY;
+function descargarReporteComoPDF(contenidoEl, btnEl) {
+  if (typeof html2pdf === "undefined") {
+    console.error("html2pdf.js no cargó todavía; reintenta en un momento.");
+    return;
   }
-  el.tooltip.style.left = `${Math.min(x + 12, window.innerWidth - 230)}px`;
-  el.tooltip.style.top = `${Math.max(y - 40, 8)}px`;
-}
 
-function hideTooltip() {
-  el.tooltip.hidden = true;
+  const nombreIe = lastRenderedData?.nombre_ie || "IE";
+  const nombreArchivo = `reporte_institucional_1_${nombreIe.replace(/[^\w]+/g, "_")}.pdf`;
+
+  const textoOriginal = btnEl.textContent;
+  btnEl.disabled = true;
+  btnEl.textContent = "Generando PDF…";
+
+  const reportActions = document.querySelector(".report-actions");
+  reportActions.style.display = "none";
+
+  /* Colchón temporal alrededor del contenido, para que el borde de las
+   * tarjetas nunca caiga justo en el límite del canvas de html2canvas. */
+  const parent = contenidoEl.parentNode;
+  const nextSibling = contenidoEl.nextSibling;
+  const buffer = document.createElement("div");
+  buffer.style.padding = "4px";
+  parent.insertBefore(buffer, contenidoEl);
+
+  const pdfHeader = document.createElement("div");
+  pdfHeader.className = "pdf-header";
+  const pdfTitle = document.createElement("h1");
+  pdfTitle.textContent = "Reporte Institucional 1 — Sesiones de aprendizaje V1";
+  const pdfSubtitle = document.createElement("p");
+  pdfSubtitle.textContent = nombreIe;
+  pdfHeader.append(pdfTitle, pdfSubtitle);
+  buffer.appendChild(pdfHeader);
+
+  buffer.appendChild(contenidoEl);
+
+  html2pdf()
+    .set({
+      margin: 10,
+      filename: nombreArchivo,
+      image: { type: "jpeg", quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+      pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+    })
+    .from(buffer)
+    .save()
+    .catch((err) => {
+      console.error("Fallo al generar el PDF:", err);
+      alert("No se pudo generar el PDF. Intenta nuevamente en unos segundos.");
+    })
+    .finally(() => {
+      parent.insertBefore(contenidoEl, nextSibling);
+      buffer.remove();
+      reportActions.style.display = "";
+      btnEl.disabled = false;
+      btnEl.textContent = textoOriginal;
+    });
 }
   </script>
 </body>

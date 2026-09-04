@@ -7,3 +7,4 @@ python-dotenv
 certifi
 structlog
 jinja2
+pytest
