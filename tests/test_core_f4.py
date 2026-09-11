@@ -95,6 +95,30 @@ def test_cp05_necesidad_frecuente_b3():
     assert core._nombre_brecha("B3") == "Situaciones significativas"
 
 
+def test_cp05b_necesidades_bajo_umbral_no_aparecen():
+    """B1, B3, B5 por debajo del 30% (Especificaciones §9, §16 paso 6):
+    el umbral es un FILTRO de inclusión en la tabla de la sección 5, no
+    solo un umbral de lectura -- no deben aparecer como filas aunque
+    existan en la distribución. Solo B2 (40,9%) supera el umbral."""
+    brechas_por_docente = {}
+    for i in range(22):
+        if i < 9:
+            brechas_por_docente[i] = ["B2"]  # 9/22 = 40.9%
+        elif i < 11:
+            brechas_por_docente[i] = ["B1"]  # 2/22 = 9.1%
+        elif i < 13:
+            brechas_por_docente[i] = ["B3"]  # 2/22 = 9.1%
+        elif i < 15:
+            brechas_por_docente[i] = ["B5"]  # 2/22 = 9.1%
+        else:
+            brechas_por_docente[i] = []
+
+    frecuencia = core.calcular_frecuencia_brechas(brechas_por_docente)
+    necesidades = core.clasificar_necesidades_frecuentes(frecuencia)
+
+    assert [n["id"] for n in necesidades] == ["B2"]
+
+
 def test_cp06_no_infiere_brecha_no_provista():
     """C3 alto pero sin B2 -> no inferir B2; respetar
     brechas_identificadas[] tal como las entrega F2 (aquí: brecha=None)."""
