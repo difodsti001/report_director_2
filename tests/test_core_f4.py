@@ -205,6 +205,49 @@ def test_cp12_no_causalidad_revision_manual():
     pass
 
 
+def test_completar_huecos_narrativos_no_descarta_lo_valido():
+    """Bug real observado en producción (IE MARIANO BONIN): al LLM le
+    faltaba UNA manifestación de necesidad y la validación anterior
+    descartaba TODA la respuesta (interpretaciones y síntesis correctas
+    incluidas), cayendo al fallback genérico. Ahora solo se completa el
+    campo faltante, preservando el resto de lo que sí generó el LLM."""
+    variables = {
+        "nombre_ie": "IE de prueba",
+        "n_docentes_total": 10,
+        "n_evidencias_validas": 5,
+        "pct_cobertura": 50,
+        "distribucion_por_aspecto": [
+            {"criterio_id": "C1", "nombre": "Coherencia entre propósito y desafíos",
+             "n": 5, "pct_logrado_destacado": 80, "pct_inicio_en_desarrollo": 20},
+        ],
+        "fortalezas": [
+            {"id": "C1", "nombre": "Coherencia entre propósito y desafíos", "n": 5, "pct": 80},
+        ],
+        "necesidades_frecuentes": [
+            {"id": "B4", "nombre": "Mediación y evaluación formativa", "n": 2, "pct": 40},
+        ],
+    }
+    data_del_llm = {
+        "interpretaciones": {"C1": "Texto real de interpretación generado por el LLM."},
+        "manifestaciones": {
+            "fortalezas": {"C1": "una relación clara entre propósito y desafío"},
+            "necesidades": {},  # <- falta B4, como en el bug real
+        },
+        "preguntas_rtc": ["¿Pregunta real generada por el LLM?"],
+        "sintesis_institucional": "Síntesis real generada por el LLM.",
+    }
+
+    resultado = core._completar_huecos_narrativos(variables, data_del_llm)
+
+    # Lo que el LLM sí generó bien se preserva tal cual...
+    assert resultado["interpretaciones"]["C1"] == "Texto real de interpretación generado por el LLM."
+    assert resultado["manifestaciones"]["fortalezas"]["C1"] == "una relación clara entre propósito y desafío"
+    assert resultado["preguntas_rtc"] == ["¿Pregunta real generada por el LLM?"]
+    assert resultado["sintesis_institucional"] == "Síntesis real generada por el LLM."
+    # ...solo el hueco puntual se completa.
+    assert resultado["manifestaciones"]["necesidades"]["B4"] == core._MANIFESTACION_GENERICA
+
+
 def test_denominacion_visible_sin_codigo():
     """El documento prohíbe mostrar los códigos C1-C5/B1-B5 en texto
     visible (ficha técnica, secciones 8 y 11) -- _nombre_criterio y

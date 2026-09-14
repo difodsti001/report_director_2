@@ -921,11 +921,13 @@ def _construir_prompt_secciones_narrativas(v: dict) -> str:
         for c in distribucion
     )
     necesidades_texto = "\n".join(
-        f"- {n['nombre']}: presente en {n['n']} de {v['n_evidencias_validas']} sesiones ({n['pct']}%)"
+        f"- {n['nombre']} (id interno {n['id']}): presente en {n['n']} de "
+        f"{v['n_evidencias_validas']} sesiones ({n['pct']}%)"
         for n in necesidades
     ) or "- Ninguna necesidad frecuente identificada."
     fortalezas_texto = "\n".join(
-        f"- {f['nombre']}: {f['n']} de {v['n_evidencias_validas']} sesiones ({f['pct']}%) en Logrado o Destacado"
+        f"- {f['nombre']} (id interno {f['id']}): {f['n']} de {v['n_evidencias_validas']} "
+        f"sesiones ({f['pct']}%) en Logrado o Destacado"
         for f in fortalezas
     ) or "- Ninguna alcanzó el umbral de fortaleza."
     retroalimentaciones_texto = "\n".join(f"- {r}" for r in retroalimentaciones) or (
@@ -948,9 +950,28 @@ def _construir_prompt_secciones_narrativas(v: dict) -> str:
         "(todos los aspectos evaluados alcanzaron el umbral de fortaleza; omite esta cláusula)"
     )
 
+    # Igual que con "aspectos con distinto nivel de desarrollo": si hay
+    # varias fortalezas, el LLM no debe elegir cuál es "la principal" (ni
+    # inventar una si no hay ninguna) -- se resuelve acá, de forma
+    # determinista, y se le entrega ya resuelta.
+    fortaleza_principal = max(fortalezas, key=lambda f: f["pct"]) if fortalezas else None
+    fortaleza_principal_texto = (
+        f"{fortaleza_principal['nombre']} (id interno {fortaleza_principal['id']})"
+        if fortaleza_principal
+        else "(ninguna fortaleza alcanzó el umbral; omite la cláusula de fortaleza -- ver instrucción de síntesis)"
+    )
+
     ids_criterios = ", ".join(f'"{c["criterio_id"]}"' for c in distribucion)
-    ids_fortalezas = ", ".join(f'"{f["id"]}"' for f in fortalezas)
-    ids_necesidades = ", ".join(f'"{n["id"]}"' for n in necesidades)
+
+    def _schema_manifestaciones(items: list[dict]) -> str:
+        # Evita mostrarle al LLM un placeholder tipo "<id>" cuando la
+        # lista viene vacía -- eso lo tentaba a inventar una clave falsa.
+        if not items:
+            return "{}"
+        return "{ " + ", ".join(f'"{i["id"]}": "manifestación breve"' for i in items) + " }"
+
+    schema_fortalezas = _schema_manifestaciones(fortalezas)
+    schema_necesidades = _schema_manifestaciones(necesidades)
 
     return f"""
 Eres un redactor pedagógico para el sistema educativo peruano. Vas a
@@ -972,6 +993,10 @@ alcanzan el umbral de frecuencia -- pueden ser ninguno):
 Fortalezas identificadas:
 {fortalezas_texto}
 
+Fortaleza principal para la síntesis (ya resuelta -- no elijas ni
+calcules otra, aunque haya varias fortalezas en la lista de arriba):
+{fortaleza_principal_texto}
+
 Aspectos con distinto nivel de desarrollo, en orden neutro -- para
 mencionar EN CONJUNTO en la síntesis, SIN elegir ni destacar uno como
 más urgente que otro, y SIN porcentajes (ya viene resuelto, no ordenes
@@ -988,8 +1013,8 @@ ni después, con esta forma exacta:
 {{
   "interpretaciones": {{ {ids_criterios}: "texto del aspecto correspondiente", ... }},
   "manifestaciones": {{
-    "fortalezas": {{ {ids_fortalezas or '"<id>"'}: "manifestación breve", ... }},
-    "necesidades": {{ {ids_necesidades or '"<id>"'}: "manifestación breve", ... }}
+    "fortalezas": {schema_fortalezas},
+    "necesidades": {schema_necesidades}
   }},
   "preguntas_rtc": ["pregunta 1", "pregunta 2", "..."],
   "sintesis_institucional": "texto de síntesis"
@@ -999,12 +1024,25 @@ Para cada "interpretaciones.<id>" (uno por cada aspecto listado arriba),
 sigue esta plantilla como base, adaptándola con naturalidad (banco de
 redacción del programa): "En [n] de [N] sesiones ([pct]%) se observa
 [resultado]. Esto significa que [explicación pedagógica]. Para comprender
-mejor esta situación, conviene contrastarla con [fuente]." Para
-"[resultado]" y "[pct]" usa EXACTAMENTE el texto de "RESULTADO A USAR EN
-LA INTERPRETACIÓN" de ESE aspecto (ya viene calculado arriba) -- NUNCA
-elijas tú cuál nivel o agrupado predomina, ni calcules ni inventes un
-porcentaje distinto al que aparece ahí. Usa una fuente de MPE/ENLA/
-evidencias de aprendizaje/otras según corresponda para "[fuente]".
+mejor esta situación, conviene contrastarla con [fuente]." Con estas dos
+reglas, cada una sobre una parte DISTINTA de la plantilla -- no dejes que
+la primera recorte la segunda:
+- Para "[resultado]" y "[pct]" (primera oración) usa EXACTAMENTE el texto
+  de "RESULTADO A USAR EN LA INTERPRETACIÓN" de ESE aspecto (ya viene
+  calculado arriba) -- NUNCA elijas tú cuál nivel o agrupado predomina,
+  ni calcules ni inventes un porcentaje distinto al que aparece ahí.
+- Para "[explicación pedagógica]" (segunda oración) escribe una
+  explicación sustanciosa y específica de 1-2 frases, apoyada en lo que
+  "evalúa" ese aspecto (ver arriba) -- no un relleno genérico ni una
+  frase de una sola línea. Por ejemplo, para "Coherencia entre propósito
+  y desafíos": "el propósito de aprendizaje está claramente alineado con
+  los desafíos pedagógicos identificados, lo que favorece la relevancia
+  y el sentido de las actividades propuestas" es el nivel de detalle
+  esperado -- no “esto significa que el aspecto se cumple”. Esta
+  explicación es cualitativa, no lleva cifras (esas ya están en la
+  primera oración).
+- Usa una fuente de MPE/ENLA/evidencias de aprendizaje/otras según
+  corresponda para "[fuente]".
 
 Para cada "manifestaciones.fortalezas.<id>" (uno por cada fortaleza
 listada arriba) y "manifestaciones.necesidades.<id>" (uno por cada
@@ -1041,9 +1079,16 @@ desarrollo, entre ellos [aspectos]. Estos resultados aportan una línea de
 base para el Diagnóstico institucional; corresponde al directivo y su
 colegiado, junto con las demás evidencias disponibles, definir qué
 aspecto analizar primero."
-- Para "[fortaleza]": no te limites a nombrarla -- agrega una frase breve
-  de qué se observa en ella, coherente con lo que ya escribiste en su
-  "interpretaciones.<id>" y con lo que "evalúa" ese aspecto (ver arriba).
+- Para "[fortaleza]": usa EXACTAMENTE la "Fortaleza principal para la
+  síntesis" de arriba (ya resuelta) -- no elijas otra entre las
+  fortalezas identificadas ni inventes una. No te limites a nombrarla:
+  agrega una frase breve de qué se observa en ella, coherente con lo que
+  ya escribiste en su "interpretaciones.<id>" y con lo que "evalúa" ese
+  aspecto. Si el dato dice que ninguna fortaleza alcanzó el umbral,
+  OMITE por completo la cláusula de fortaleza y empieza el párrafo
+  directamente con "La revisión de las Sesiones V1 muestra aspectos con
+  distinto nivel de desarrollo, entre ellos [aspectos]..." (ajusta la
+  gramática para que quede natural sin esa primera cláusula).
 - Para "[aspectos]": usa EXACTAMENTE los aspectos de "Aspectos con
   distinto nivel de desarrollo" de arriba, en el mismo orden. Para CADA
   UNO, agrega una caracterización breve de qué se observa -- basada en lo
@@ -1055,6 +1100,11 @@ aspecto analizar primero."
 - Si la lista de aspectos viene vacía, omite la cláusula "y, al mismo
   tiempo..." y cierra igual con la oración sobre el Diagnóstico
   institucional y la RTC 1.
+- Si tanto la fortaleza como la lista de aspectos vienen vacías (caso
+  límite, ej. muestra muy pequeña), redacta un párrafo breve que solo
+  mencione la cobertura y cierre con la oración sobre el Diagnóstico
+  institucional y la RTC 1, sin inventar una fortaleza ni un aspecto que
+  no esté en los datos.
 - El párrafo resultante será más largo que la plantilla mínima -- eso es
   intencional, siempre que cada frase agregada describa (nunca compare
   ni priorice).
@@ -1100,65 +1150,124 @@ Reglas estrictas, sin excepción:
 """.strip()
 
 
-def _secciones_narrativas_fallback(variables: dict) -> dict:
-    """Degradación si el LLM falla dos veces seguidas: texto plantillado
-    mínimo (sin elaboración pedagógica), para no romper el reporte
-    completo por una falla de la llamada al LLM."""
-    interpretaciones = {
-        c["criterio_id"]: (
-            f"En {c['n']} sesiones revisadas, {c['nombre']} alcanza {c['pct_logrado_destacado']}% "
-            f"en Logrado o Destacado y {c['pct_inicio_en_desarrollo']}% en Inicio o En desarrollo."
-        )
-        for c in variables["distribucion_por_aspecto"]
-    }
-    sintesis = (
+_MANIFESTACION_GENERICA = "resultados que conviene revisar con mayor detalle junto con otras evidencias"
+
+
+def _interpretacion_fallback(c: dict) -> str:
+    """Interpretación mínima determinista para UN aspecto (sin
+    elaboración pedagógica), usada para completar huecos puntuales de la
+    respuesta del LLM o como degradación total si el LLM falla dos veces."""
+    return (
+        f"En {c['n']} sesiones revisadas, {c['nombre']} alcanza {c['pct_logrado_destacado']}% "
+        f"en Logrado o Destacado y {c['pct_inicio_en_desarrollo']}% en Inicio o En desarrollo."
+    )
+
+
+def _sintesis_fallback(variables: dict) -> str:
+    """Síntesis institucional mínima determinista, para el mismo caso que
+    _interpretacion_fallback."""
+    return (
         f"La revisión de las Sesiones V1 de {variables.get('nombre_ie', 'la institución')} reúne "
         f"{variables.get('n_evidencias_validas')} de {variables.get('n_docentes_total')} sesiones "
         f"válidas ({variables.get('pct_cobertura')}% de cobertura). Estos resultados aportan una "
         "línea de base para el Diagnóstico institucional; su interpretación requiere "
         "contrastarlos con las demás evidencias disponibles."
     )
-    manifestacion_generica = "resultados que conviene revisar con mayor detalle junto con otras evidencias"
+
+
+def _secciones_narrativas_fallback(variables: dict) -> dict:
+    """Degradación total: se usa solo cuando el LLM ni siquiera devuelve
+    un JSON parseable después de 2 intentos. Texto plantillado mínimo en
+    todos los campos, para no romper el reporte completo."""
     return {
-        "interpretaciones": interpretaciones,
+        "interpretaciones": {
+            c["criterio_id"]: _interpretacion_fallback(c) for c in variables["distribucion_por_aspecto"]
+        },
         "manifestaciones": {
-            "fortalezas": {f["id"]: manifestacion_generica for f in variables["fortalezas"]},
-            "necesidades": {n["id"]: manifestacion_generica for n in variables["necesidades_frecuentes"]},
+            "fortalezas": {f["id"]: _MANIFESTACION_GENERICA for f in variables["fortalezas"]},
+            "necesidades": {n["id"]: _MANIFESTACION_GENERICA for n in variables["necesidades_frecuentes"]},
         },
         "preguntas_rtc": list(PREGUNTAS_RTC_FIJAS),
+        "sintesis_institucional": _sintesis_fallback(variables),
+    }
+
+
+def _completar_huecos_narrativos(variables: dict, data: dict) -> dict:
+    """
+    Completa SOLO los campos puntuales que el LLM haya omitido, en vez de
+    descartar toda la respuesta por un campo faltante (antes, si por
+    ejemplo faltaba una sola manifestación de necesidad, se tiraban
+    también las 5 interpretaciones y la síntesis, que sí venían bien, y
+    se gastaba un reintento completo para nada). Registra qué campos
+    tuvo que completar, para poder monitorear qué tan seguido pasa.
+    """
+    interpretaciones = dict(data.get("interpretaciones") or {})
+    manifestaciones_crudas = data.get("manifestaciones") or {}
+    manifestaciones = {
+        "fortalezas": dict(manifestaciones_crudas.get("fortalezas") or {}),
+        "necesidades": dict(manifestaciones_crudas.get("necesidades") or {}),
+    }
+    preguntas_rtc = data.get("preguntas_rtc")
+    sintesis = data.get("sintesis_institucional")
+
+    faltantes = []
+
+    for c in variables["distribucion_por_aspecto"]:
+        if not interpretaciones.get(c["criterio_id"]):
+            interpretaciones[c["criterio_id"]] = _interpretacion_fallback(c)
+            faltantes.append(f"interpretaciones.{c['criterio_id']}")
+
+    for f in variables["fortalezas"]:
+        if not manifestaciones["fortalezas"].get(f["id"]):
+            manifestaciones["fortalezas"][f["id"]] = _MANIFESTACION_GENERICA
+            faltantes.append(f"manifestaciones.fortalezas.{f['id']}")
+
+    for n in variables["necesidades_frecuentes"]:
+        if not manifestaciones["necesidades"].get(n["id"]):
+            manifestaciones["necesidades"][n["id"]] = _MANIFESTACION_GENERICA
+            faltantes.append(f"manifestaciones.necesidades.{n['id']}")
+
+    if not isinstance(preguntas_rtc, list) or not preguntas_rtc:
+        preguntas_rtc = list(PREGUNTAS_RTC_FIJAS)
+        faltantes.append("preguntas_rtc")
+
+    if not sintesis:
+        sintesis = _sintesis_fallback(variables)
+        faltantes.append("sintesis_institucional")
+
+    if faltantes:
+        log.warning(
+            "llm_secciones_narrativas_incompletas",
+            cod_modular=variables.get("cod_modular"),
+            campos_completados_con_fallback=faltantes,
+        )
+
+    return {
+        "interpretaciones": interpretaciones,
+        "manifestaciones": manifestaciones,
+        "preguntas_rtc": preguntas_rtc,
         "sintesis_institucional": sintesis,
     }
 
 
 async def redactar_secciones_narrativas(variables: dict) -> dict:
     """Llama al LLM UNA vez por reporte para redactar las interpretaciones
-    por aspecto y la síntesis institucional -- las únicas piezas que
-    requieren elaboración pedagógica real; todo lo demás del reporte se
-    arma en Python. Si el LLM no devuelve un JSON válido con la forma
-    esperada, reintenta una vez; si vuelve a fallar, degrada a un texto
-    plantillado mínimo en vez de romper el reporte completo."""
+    por aspecto, las manifestaciones, las preguntas RTC y la síntesis
+    institucional -- las únicas piezas que requieren elaboración
+    pedagógica real; todo lo demás del reporte se arma en Python. Si el
+    LLM no devuelve un JSON parseable, reintenta una vez; si vuelve a
+    fallar, degrada TODO a texto plantillado mínimo. Si el JSON es válido
+    pero le faltan campos puntuales, esos huecos se completan sin
+    descartar el resto de la respuesta (ver _completar_huecos_narrativos)."""
     prompt = _construir_prompt_secciones_narrativas(variables)
-    ids_esperados = {c["criterio_id"] for c in variables["distribucion_por_aspecto"]}
-    ids_fortalezas_esperadas = {f["id"] for f in variables["fortalezas"]}
-    ids_necesidades_esperadas = {n["id"] for n in variables["necesidades_frecuentes"]}
 
     for intento in (1, 2):
         inicio = time.monotonic()
         try:
             crudo = await generar_texto_narrativo(prompt, formato_json=True)
             data = json.loads(crudo)
-            interpretaciones = data["interpretaciones"]
-            manifestaciones = data["manifestaciones"]
-            preguntas_rtc = data["preguntas_rtc"]
-            sintesis = data["sintesis_institucional"]
-            if not ids_esperados.issubset(interpretaciones.keys()):
-                raise ValueError("faltan interpretaciones para algún aspecto en la respuesta del LLM")
-            if not ids_fortalezas_esperadas.issubset(manifestaciones.get("fortalezas", {}).keys()):
-                raise ValueError("faltan manifestaciones de fortaleza en la respuesta del LLM")
-            if not ids_necesidades_esperadas.issubset(manifestaciones.get("necesidades", {}).keys()):
-                raise ValueError("faltan manifestaciones de necesidad en la respuesta del LLM")
-            if not isinstance(preguntas_rtc, list) or not preguntas_rtc:
-                raise ValueError("preguntas_rtc vacío o con formato inválido en la respuesta del LLM")
+            if not isinstance(data, dict):
+                raise ValueError("la respuesta del LLM no es un objeto JSON")
         except Exception:
             duracion_ms = round((time.monotonic() - inicio) * 1000)
             log.error(
@@ -1178,12 +1287,7 @@ async def redactar_secciones_narrativas(variables: dict) -> dict:
             cod_modular=variables.get("cod_modular"),
             duracion_ms=duracion_ms,
         )
-        return {
-            "interpretaciones": interpretaciones,
-            "manifestaciones": manifestaciones,
-            "preguntas_rtc": preguntas_rtc,
-            "sintesis_institucional": sintesis,
-        }
+        return _completar_huecos_narrativos(variables, data)
 
 
 def _sin_punto_final(texto: str) -> str:
