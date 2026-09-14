@@ -1019,9 +1019,13 @@ function renderEncabezado(data) {
     })
   );
 
+  // Siempre en hora de Lima/Perú, sin importar la zona horaria del
+  // navegador de quien lo mire -- fecha_generacion viene del backend en
+  // UTC explícito (con offset), así que la conversión es inequívoca.
   const fecha = data.fecha_generacion
     ? new Date(data.fecha_generacion).toLocaleString("es-PE", {
         day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+        timeZone: "America/Lima",
       })
     : "—";
   statRow.appendChild(statTile("Fecha de corte", fecha, { small: true }));

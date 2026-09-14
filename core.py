@@ -16,7 +16,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
@@ -1425,15 +1425,19 @@ async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrit
         for n in variables["necesidades_frecuentes"]
     ]
 
+    # Marcado explícitamente como UTC (el servidor corre en UTC) -- así
+    # el frontend puede convertir de forma inequívoca a hora de Lima sin
+    # depender de la zona horaria del navegador de quien lo mire.
+    ahora_utc = datetime.now(timezone.utc)
     return {
-        "reporte_id": f"{cod_modular}-{datetime.now().strftime('%Y%m%dT%H%M%S')}",
+        "reporte_id": f"{cod_modular}-{ahora_utc.strftime('%Y%m%dT%H%M%S')}",
         "cod_modular": cod_modular,
         "institucion_id": cod_modular,
         "nombre_ie": nombre_ie,
         "tipo_reporte": "REPORTE_INSTITUCIONAL_1",
         "hito_asociado": "HITO_1_DIRECTIVO",
         "version_evidencia": "V1",
-        "fecha_generacion": datetime.now().isoformat(),
+        "fecha_generacion": ahora_utc.isoformat(),
         "n_docentes_total": n_docentes_total,
         "n_evidencias_validas": n_evidencias_validas,
         "n_evidencias_no_validas": estados["n_no_validas"],
