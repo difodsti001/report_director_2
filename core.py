@@ -639,6 +639,19 @@ def calcular_distribucion_por_criterio(filas: list[dict]) -> list[dict]:
     return resultado
 
 
+def _resultado_predominante_texto(c: dict) -> str:
+    """
+    Devuelve, ya resuelto en Python, el texto exacto que la interpretación
+    de un aspecto (sección 3) debe citar: cuál de los dos agrupados de
+    lectura predomina y su porcentaje EXACTO tal como aparece en la tabla
+    de la sección 2. El LLM nunca debe elegir ni calcular esto -- ver
+    _construir_prompt_secciones_narrativas.
+    """
+    if c["pct_logrado_destacado"] >= c["pct_inicio_en_desarrollo"]:
+        return f"Logrado o Destacado ({c['pct_logrado_destacado']}%)"
+    return f"Inicio o En desarrollo ({c['pct_inicio_en_desarrollo']}%)"
+
+
 def calcular_frecuencia_brechas(brechas_por_docente: dict[int, list[str]]) -> dict[str, dict]:
     n_docentes = len(brechas_por_docente)
     if n_docentes == 0:
@@ -902,7 +915,9 @@ def _construir_prompt_secciones_narrativas(v: dict) -> str:
         f"válidas -- Inicio {c['pct_inicio']}%, En desarrollo {c['pct_en_desarrollo']}%, "
         f"Logrado {c['pct_logrado']}%, Destacado {c['pct_destacado']}% "
         f"(Inicio+En desarrollo {c['pct_inicio_en_desarrollo']}%, "
-        f"Logrado+Destacado {c['pct_logrado_destacado']}%)"
+        f"Logrado+Destacado {c['pct_logrado_destacado']}%). "
+        f"RESULTADO A USAR EN LA INTERPRETACIÓN (ya calculado, no elijas ni "
+        f"calcules otro): \"{_resultado_predominante_texto(c)}\""
         for c in distribucion
     )
     necesidades_texto = "\n".join(
@@ -984,10 +999,12 @@ Para cada "interpretaciones.<id>" (uno por cada aspecto listado arriba),
 sigue esta plantilla como base, adaptándola con naturalidad (banco de
 redacción del programa): "En [n] de [N] sesiones ([pct]%) se observa
 [resultado]. Esto significa que [explicación pedagógica]. Para comprender
-mejor esta situación, conviene contrastarla con [fuente]." Usa el
-resultado predominante de ESE aspecto (el nivel o agrupado con mayor %)
-para describir "[resultado]", y una fuente de MPE/ENLA/evidencias de
-aprendizaje/otras según corresponda.
+mejor esta situación, conviene contrastarla con [fuente]." Para
+"[resultado]" y "[pct]" usa EXACTAMENTE el texto de "RESULTADO A USAR EN
+LA INTERPRETACIÓN" de ESE aspecto (ya viene calculado arriba) -- NUNCA
+elijas tú cuál nivel o agrupado predomina, ni calcules ni inventes un
+porcentaje distinto al que aparece ahí. Usa una fuente de MPE/ENLA/
+evidencias de aprendizaje/otras según corresponda para "[fuente]".
 
 Para cada "manifestaciones.fortalezas.<id>" (uno por cada fortaleza
 listada arriba) y "manifestaciones.necesidades.<id>" (uno por cada
@@ -1012,7 +1029,9 @@ aparezcan en ellas) y en los resultados por aspecto. Cada pregunta debe
 ser general para el equipo (nunca mencionar ni describir a un docente en
 particular, ni citar textualmente una retroalimentación) y debe invitar a
 contrastar la información con MPE, ENLA u otras evidencias, no a asignar
-responsabilidades individuales.
+responsabilidades individuales. NUNCA cites un porcentaje ni una cifra
+exacta dentro de una pregunta -- son preguntas abiertas, no afirmaciones
+de dato; si quieres referirte a un aspecto, nómbralo sin número.
 
 Para "sintesis_institucional", sigue esta plantilla como base (banco de
 redacción del programa, un solo párrafo, pero más descriptivo que un
@@ -1452,10 +1471,14 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
          actual vs guardado; si cambió, recalcula; si no, sirve el guardado.
       4. Si hay fila con estado distinto de 'generado' (intento previo
          fallido) -> reintenta generar con los datos actuales.
-      5. Cualquier intento (éxito o falla) actualiza el estado guardado,
-         para que el directivo sepa por qué no tiene informe todavía.
+      5. Si la generación falla por falta de datos (SinDatosDisponiblesError)
+         y YA había un reporte vigente ('generado'), no se degrada el
+         caché -- se sigue sirviendo el último reporte bueno conocido
+         (protege contra huecos transitorios del pipeline de datos, ej.
+         un reprocesamiento que deja la vista momentáneamente vacía).
+         Solo se marca 'sin_datos' cuando nunca hubo un reporte generado.
       6. Registra la asociación directivo-reporte solo si se logra
-         generar (courseid/cmid: trazabilidad).
+         generar o servir un reporte (courseid/cmid: trazabilidad).
     """
     inicio = time.monotonic()
     log.info("reporte_solicitado", userid=userid, courseid=courseid, cmid=cmid)
@@ -1494,11 +1517,27 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
         try:
             reporte = await generar_reporte(cod_modular, nombre_ie, region, distrito)
         except SinDatosDisponiblesError:
-            await guardar_estado_reporte(cod_modular, "sin_datos", 0)
-            raise
-        id_reporte = await guardar_estado_reporte(
-            cod_modular, "generado", reporte["n_evidencias_validas"], reporte
-        )
+            if guardado is not None and guardado["estado"] == "generado":
+                # Vacío transitorio (ej. reprocesamiento del pipeline de
+                # datos que deja la vista momentáneamente sin filas para
+                # esta IE): no se degrada un reporte que ya estaba
+                # vigente -- se sigue sirviendo el último bueno conocido
+                # y se reintenta en la próxima consulta, en vez de
+                # romper el dashboard por un hueco momentáneo de datos.
+                log.warning(
+                    "vista_vacia_transitoria_se_mantiene_reporte_anterior",
+                    cod_modular=cod_modular,
+                    n_docentes_guardado=guardado["n_docentes_evaluados"],
+                )
+                id_reporte = guardado["id"]
+                reporte = guardado["reporte_json"]
+            else:
+                await guardar_estado_reporte(cod_modular, "sin_datos", 0)
+                raise
+        else:
+            id_reporte = await guardar_estado_reporte(
+                cod_modular, "generado", reporte["n_evidencias_validas"], reporte
+            )
 
     await registrar_consulta(cod_modular, userid, courseid, cmid, id_reporte)
 

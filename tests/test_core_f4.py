@@ -36,6 +36,21 @@ def test_cp01_cobertura_y_clasificacion_estados():
     assert pct_cobertura == 92  # 22/24 = 91.7% redondeado
 
 
+def test_resultado_predominante_texto_no_inventa_porcentaje():
+    """El texto de interpretación (sección 3) debe citar EXACTAMENTE el
+    % del agrupado predominante de la tabla de la sección 2 -- nunca un
+    número distinto (bug real observado: el LLM citaba porcentajes que
+    no existían en la tabla, ej. 80% cuando la tabla decía 40%)."""
+    c_favorable = {"pct_logrado_destacado": 80, "pct_inicio_en_desarrollo": 20}
+    assert core._resultado_predominante_texto(c_favorable) == "Logrado o Destacado (80%)"
+
+    c_desfavorable = {"pct_logrado_destacado": 40, "pct_inicio_en_desarrollo": 60}
+    assert core._resultado_predominante_texto(c_desfavorable) == "Inicio o En desarrollo (60%)"
+
+    c_empate = {"pct_logrado_destacado": 50, "pct_inicio_en_desarrollo": 50}
+    assert core._resultado_predominante_texto(c_empate) == "Logrado o Destacado (50%)"
+
+
 def test_cp02_distribucion_c3():
     """C3: 6 Inicio, 9 Desarrollo, 6 Logrado, 1 Destacado -> 27.3%; 40.9%;
     27.3%; 4.5%; agrupado 68.2% y 31.8%."""
