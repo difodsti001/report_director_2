@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -629,6 +630,14 @@ def calcular_distribucion_por_criterio(filas: list[dict]) -> list[dict]:
         resultado.append({
             "criterio_id": f"C{criterio_id}",
             "n": total,
+            # Conteos crudos (no derivados de porcentajes redondeados) --
+            # necesarios para poder citar "[n] de [N]" con el número
+            # EXACTO de sesiones en el agrupado predominante, sin que el
+            # LLM tenga que reconstruirlo a partir del %.
+            "n_inicio": conteos["inicio"],
+            "n_en_desarrollo": conteos["en_desarrollo"],
+            "n_logrado": conteos["logrado"],
+            "n_destacado": conteos["destacado"],
             "pct_inicio": pct_inicio,
             "pct_en_desarrollo": pct_en_desarrollo,
             "pct_logrado": pct_logrado,
@@ -639,17 +648,27 @@ def calcular_distribucion_por_criterio(filas: list[dict]) -> list[dict]:
     return resultado
 
 
-def _resultado_predominante_texto(c: dict) -> str:
+def _primera_oracion_interpretacion(c: dict) -> str:
     """
-    Devuelve, ya resuelto en Python, el texto exacto que la interpretación
-    de un aspecto (sección 3) debe citar: cuál de los dos agrupados de
-    lectura predomina y su porcentaje EXACTO tal como aparece en la tabla
-    de la sección 2. El LLM nunca debe elegir ni calcular esto -- ver
-    _construir_prompt_secciones_narrativas.
+    Arma en Python -- con el conteo EXACTO, no derivado de un porcentaje
+    redondeado -- la primera oración de la interpretación de un aspecto
+    (sección 3): "En [n] de [N] sesiones ([pct]%) se observa [resultado]."
+    El LLM NUNCA escribe esta oración (ni sus números): solo redacta la
+    explicación pedagógica y la fuente que van después. Así se elimina de
+    raíz el riesgo de que el modelo invente o desalinee una cifra frente
+    a la tabla de la sección 2 -- no hay instrucción de prompt que pueda
+    garantizar esto de forma confiable, solo no dejarlo en sus manos.
     """
+    n_total = c["n"]
     if c["pct_logrado_destacado"] >= c["pct_inicio_en_desarrollo"]:
-        return f"Logrado o Destacado ({c['pct_logrado_destacado']}%)"
-    return f"Inicio o En desarrollo ({c['pct_inicio_en_desarrollo']}%)"
+        n_grupo = c["n_logrado"] + c["n_destacado"]
+        pct_grupo = c["pct_logrado_destacado"]
+        resultado = "Logrado o Destacado"
+    else:
+        n_grupo = c["n_inicio"] + c["n_en_desarrollo"]
+        pct_grupo = c["pct_inicio_en_desarrollo"]
+        resultado = "Inicio o En desarrollo"
+    return f"En {n_grupo} de {n_total} sesiones ({pct_grupo}%) se observa {resultado}."
 
 
 def calcular_frecuencia_brechas(brechas_por_docente: dict[int, list[str]]) -> dict[str, dict]:
@@ -916,8 +935,10 @@ def _construir_prompt_secciones_narrativas(v: dict) -> str:
         f"Logrado {c['pct_logrado']}%, Destacado {c['pct_destacado']}% "
         f"(Inicio+En desarrollo {c['pct_inicio_en_desarrollo']}%, "
         f"Logrado+Destacado {c['pct_logrado_destacado']}%). "
-        f"RESULTADO A USAR EN LA INTERPRETACIÓN (ya calculado, no elijas ni "
-        f"calcules otro): \"{_resultado_predominante_texto(c)}\""
+        f"PRIMERA ORACIÓN YA REDACTADA por el sistema, con las cifras "
+        f"exactas (NO la repitas, NO la reescribas, NO cites tú ningún "
+        f"número para este aspecto -- tu texto se coloca DESPUÉS de "
+        f"ella): \"{_primera_oracion_interpretacion(c)}\""
         for c in distribucion
     )
     necesidades_texto = "\n".join(
@@ -1011,7 +1032,7 @@ tu respuesta, úsalas solo para reconocer temas recurrentes):
 Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional antes
 ni después, con esta forma exacta:
 {{
-  "interpretaciones": {{ {ids_criterios}: "texto del aspecto correspondiente", ... }},
+  "interpretaciones": {{ {ids_criterios}: "SOLO explicación + fuente, sin la primera oración ni cifras", ... }},
   "manifestaciones": {{
     "fortalezas": {schema_fortalezas},
     "necesidades": {schema_necesidades}
@@ -1021,28 +1042,27 @@ ni después, con esta forma exacta:
 }}
 
 Para cada "interpretaciones.<id>" (uno por cada aspecto listado arriba),
-sigue esta plantilla como base, adaptándola con naturalidad (banco de
-redacción del programa): "En [n] de [N] sesiones ([pct]%) se observa
-[resultado]. Esto significa que [explicación pedagógica]. Para comprender
-mejor esta situación, conviene contrastarla con [fuente]." Con estas dos
-reglas, cada una sobre una parte DISTINTA de la plantilla -- no dejes que
-la primera recorte la segunda:
-- Para "[resultado]" y "[pct]" (primera oración) usa EXACTAMENTE el texto
-  de "RESULTADO A USAR EN LA INTERPRETACIÓN" de ESE aspecto (ya viene
-  calculado arriba) -- NUNCA elijas tú cuál nivel o agrupado predomina,
-  ni calcules ni inventes un porcentaje distinto al que aparece ahí.
-- Para "[explicación pedagógica]" (segunda oración) escribe una
-  explicación sustanciosa y específica de 1-2 frases, apoyada en lo que
-  "evalúa" ese aspecto (ver arriba) -- no un relleno genérico ni una
-  frase de una sola línea. Por ejemplo, para "Coherencia entre propósito
-  y desafíos": "el propósito de aprendizaje está claramente alineado con
-  los desafíos pedagógicos identificados, lo que favorece la relevancia
-  y el sentido de las actividades propuestas" es el nivel de detalle
-  esperado -- no “esto significa que el aspecto se cumple”. Esta
-  explicación es cualitativa, no lleva cifras (esas ya están en la
-  primera oración).
-- Usa una fuente de MPE/ENLA/evidencias de aprendizaje/otras según
-  corresponda para "[fuente]".
+escribe ÚNICAMENTE la continuación de la "PRIMERA ORACIÓN YA REDACTADA"
+que aparece junto a ese aspecto -- NO la incluyas tú, el sistema ya la
+antepone automáticamente por fuera. Tu texto son las dos oraciones
+siguientes de la plantilla del banco de redacción: "[explicación
+pedagógica]. Para comprender mejor esta situación, conviene contrastarla
+con [fuente]." Es decir, "interpretaciones.<id>" debe EMPEZAR directo con
+la explicación (ej. "Esto significa que..."), nunca con "En [n] de
+[N]..." ni con ningún número -- todas las cifras de este aspecto ya
+están en la primera oración que el sistema antepone, y citar otra ahí
+duplicaría o contradiría esa cifra.
+- Para la explicación: escribe algo sustancioso y específico de 1-2
+  frases, apoyado en lo que "evalúa" ese aspecto (ver arriba) -- no un
+  relleno genérico ni una frase de una sola línea. Por ejemplo, para
+  "Coherencia entre propósito y desafíos": "Esto significa que el
+  propósito de aprendizaje está claramente alineado con los desafíos
+  pedagógicos identificados, lo que favorece la relevancia y el sentido
+  de las actividades propuestas." es el nivel de detalle esperado -- no
+  "esto significa que el aspecto se cumple". Esta explicación es
+  cualitativa, NUNCA lleva cifras ni porcentajes.
+- Cierra con una oración de contraste usando una fuente de MPE/ENLA/
+  evidencias de aprendizaje/otras según corresponda.
 
 Para cada "manifestaciones.fortalezas.<id>" (uno por cada fortaleza
 listada arriba) y "manifestaciones.necesidades.<id>" (uno por cada
@@ -1154,13 +1174,28 @@ _MANIFESTACION_GENERICA = "resultados que conviene revisar con mayor detalle jun
 
 
 def _interpretacion_fallback(c: dict) -> str:
-    """Interpretación mínima determinista para UN aspecto (sin
-    elaboración pedagógica), usada para completar huecos puntuales de la
-    respuesta del LLM o como degradación total si el LLM falla dos veces."""
+    """Interpretación completa (primera oración con cifras exactas +
+    cuerpo mínimo sin elaboración pedagógica), usada para completar
+    huecos puntuales de la respuesta del LLM o como degradación total si
+    el LLM falla dos veces."""
     return (
-        f"En {c['n']} sesiones revisadas, {c['nombre']} alcanza {c['pct_logrado_destacado']}% "
-        f"en Logrado o Destacado y {c['pct_inicio_en_desarrollo']}% en Inicio o En desarrollo."
+        f"{_primera_oracion_interpretacion(c)} Esto se reporta a partir de los datos "
+        "disponibles. Para comprender mejor esta situación, conviene contrastarla con "
+        "las evidencias de aula."
     )
+
+
+# Por si el LLM ignora la instrucción de no escribir la primera oración
+# con cifras y de todos modos la incluye -- se recorta para no duplicar
+# ni contradecir la oración que Python ya antepone (ver
+# _completar_huecos_narrativos).
+_PATRON_ORACION_NUMERICA_INICIAL = re.compile(
+    r"^\s*En\s+\d+\s+de\s+\d+\s+sesiones\s*\([^)]*\)[^.]*\.\s*", re.IGNORECASE
+)
+
+
+def _quitar_oracion_numerica_inicial(texto: str) -> str:
+    return _PATRON_ORACION_NUMERICA_INICIAL.sub("", texto, count=1).strip()
 
 
 def _sintesis_fallback(variables: dict) -> str:
@@ -1213,7 +1248,16 @@ def _completar_huecos_narrativos(variables: dict, data: dict) -> dict:
     faltantes = []
 
     for c in variables["distribucion_por_aspecto"]:
-        if not interpretaciones.get(c["criterio_id"]):
+        cuerpo_llm = interpretaciones.get(c["criterio_id"])
+        if cuerpo_llm:
+            # Python es dueño exclusivo de la primera oración (cifras
+            # exactas) -- se antepone siempre, sin importar lo que haya
+            # escrito el LLM. Si el LLM igual escribió su propia versión
+            # con números al inicio (ignorando la instrucción), se
+            # recorta para no duplicar ni contradecir la de Python.
+            cuerpo_llm = _quitar_oracion_numerica_inicial(cuerpo_llm)
+            interpretaciones[c["criterio_id"]] = f"{_primera_oracion_interpretacion(c)} {cuerpo_llm}"
+        else:
             interpretaciones[c["criterio_id"]] = _interpretacion_fallback(c)
             faltantes.append(f"interpretaciones.{c['criterio_id']}")
 

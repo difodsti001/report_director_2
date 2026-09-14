@@ -36,19 +36,74 @@ def test_cp01_cobertura_y_clasificacion_estados():
     assert pct_cobertura == 92  # 22/24 = 91.7% redondeado
 
 
-def test_resultado_predominante_texto_no_inventa_porcentaje():
-    """El texto de interpretación (sección 3) debe citar EXACTAMENTE el
-    % del agrupado predominante de la tabla de la sección 2 -- nunca un
-    número distinto (bug real observado: el LLM citaba porcentajes que
-    no existían en la tabla, ej. 80% cuando la tabla decía 40%)."""
-    c_favorable = {"pct_logrado_destacado": 80, "pct_inicio_en_desarrollo": 20}
-    assert core._resultado_predominante_texto(c_favorable) == "Logrado o Destacado (80%)"
+def test_primera_oracion_interpretacion_no_inventa_cifras():
+    """La primera oración de la interpretación (sección 3) debe citar el
+    conteo y % EXACTOS del agrupado predominante de la tabla de la
+    sección 2 -- nunca un número distinto ni el total como si fuera el
+    conteo del grupo (bug real observado: el LLM escribía "5 de 5" para
+    un aspecto donde la tabla decía 80%, no 100%). Ahora la arma Python
+    por completo, el LLM nunca la toca."""
+    c_favorable = {
+        "n": 5, "n_inicio": 1, "n_en_desarrollo": 0, "n_logrado": 3, "n_destacado": 1,
+        "pct_logrado_destacado": 80, "pct_inicio_en_desarrollo": 20,
+    }
+    assert core._primera_oracion_interpretacion(c_favorable) == "En 4 de 5 sesiones (80%) se observa Logrado o Destacado."
 
-    c_desfavorable = {"pct_logrado_destacado": 40, "pct_inicio_en_desarrollo": 60}
-    assert core._resultado_predominante_texto(c_desfavorable) == "Inicio o En desarrollo (60%)"
+    c_desfavorable = {
+        "n": 5, "n_inicio": 1, "n_en_desarrollo": 2, "n_logrado": 2, "n_destacado": 0,
+        "pct_logrado_destacado": 40, "pct_inicio_en_desarrollo": 60,
+    }
+    assert core._primera_oracion_interpretacion(c_desfavorable) == "En 3 de 5 sesiones (60%) se observa Inicio o En desarrollo."
 
-    c_empate = {"pct_logrado_destacado": 50, "pct_inicio_en_desarrollo": 50}
-    assert core._resultado_predominante_texto(c_empate) == "Logrado o Destacado (50%)"
+    c_empate = {
+        "n": 4, "n_inicio": 1, "n_en_desarrollo": 1, "n_logrado": 2, "n_destacado": 0,
+        "pct_logrado_destacado": 50, "pct_inicio_en_desarrollo": 50,
+    }
+    assert core._primera_oracion_interpretacion(c_empate) == "En 2 de 4 sesiones (50%) se observa Logrado o Destacado."
+
+
+def test_interpretacion_final_siempre_usa_oracion_de_python():
+    """_completar_huecos_narrativos debe anteponer SIEMPRE la primera
+    oración calculada por Python, y recortar cualquier oración numérica
+    que el LLM haya escrito igual al inicio (por si ignora la
+    instrucción de no incluirla), para que nunca queden dos oraciones
+    con cifras -- una de Python y otra (posiblemente distinta) del LLM."""
+    c = {
+        "criterio_id": "C4", "nombre": "Mediación y evaluación formativa",
+        "n": 5, "n_inicio": 1, "n_en_desarrollo": 2, "n_logrado": 2, "n_destacado": 0,
+        "pct_logrado_destacado": 40, "pct_inicio_en_desarrollo": 60,
+    }
+    variables = {
+        "distribucion_por_aspecto": [c],
+        "fortalezas": [],
+        "necesidades_frecuentes": [],
+    }
+
+    # Caso 1: el LLM obedeció y solo mandó el cuerpo.
+    data = {
+        "interpretaciones": {"C4": "Esto significa que aún se puede fortalecer. Conviene contrastarla con el MPE."},
+        "manifestaciones": {"fortalezas": {}, "necesidades": {}},
+        "preguntas_rtc": ["¿Pregunta?"],
+        "sintesis_institucional": "Síntesis.",
+    }
+    resultado = core._completar_huecos_narrativos(variables, data)
+    assert resultado["interpretaciones"]["C4"] == (
+        "En 3 de 5 sesiones (60%) se observa Inicio o En desarrollo. "
+        "Esto significa que aún se puede fortalecer. Conviene contrastarla con el MPE."
+    )
+
+    # Caso 2: el LLM ignoró la instrucción y escribió su propia (mala)
+    # primera oración con cifras -- debe recortarse, no duplicarse.
+    data_con_cifras_del_llm = {
+        "interpretaciones": {"C4": "En 5 de 5 sesiones (80%) se observa logrado. Esto significa que va bien."},
+        "manifestaciones": {"fortalezas": {}, "necesidades": {}},
+        "preguntas_rtc": ["¿Pregunta?"],
+        "sintesis_institucional": "Síntesis.",
+    }
+    resultado2 = core._completar_huecos_narrativos(variables, data_con_cifras_del_llm)
+    assert resultado2["interpretaciones"]["C4"] == (
+        "En 3 de 5 sesiones (60%) se observa Inicio o En desarrollo. Esto significa que va bien."
+    )
 
 
 def test_cp02_distribucion_c3():
@@ -218,7 +273,8 @@ def test_completar_huecos_narrativos_no_descarta_lo_valido():
         "pct_cobertura": 50,
         "distribucion_por_aspecto": [
             {"criterio_id": "C1", "nombre": "Coherencia entre propósito y desafíos",
-             "n": 5, "pct_logrado_destacado": 80, "pct_inicio_en_desarrollo": 20},
+             "n": 5, "n_inicio": 1, "n_en_desarrollo": 0, "n_logrado": 3, "n_destacado": 1,
+             "pct_logrado_destacado": 80, "pct_inicio_en_desarrollo": 20},
         ],
         "fortalezas": [
             {"id": "C1", "nombre": "Coherencia entre propósito y desafíos", "n": 5, "pct": 80},
@@ -239,8 +295,12 @@ def test_completar_huecos_narrativos_no_descarta_lo_valido():
 
     resultado = core._completar_huecos_narrativos(variables, data_del_llm)
 
-    # Lo que el LLM sí generó bien se preserva tal cual...
-    assert resultado["interpretaciones"]["C1"] == "Texto real de interpretación generado por el LLM."
+    # Lo que el LLM sí generó bien se preserva (Python antepone su propia
+    # primera oración con cifras exactas, el cuerpo del LLM queda intacto)...
+    assert resultado["interpretaciones"]["C1"] == (
+        "En 4 de 5 sesiones (80%) se observa Logrado o Destacado. "
+        "Texto real de interpretación generado por el LLM."
+    )
     assert resultado["manifestaciones"]["fortalezas"]["C1"] == "una relación clara entre propósito y desafío"
     assert resultado["preguntas_rtc"] == ["¿Pregunta real generada por el LLM?"]
     assert resultado["sintesis_institucional"] == "Síntesis real generada por el LLM."
