@@ -1517,12 +1517,19 @@ async def registrar_consulta(
     cod_modular: str, userid_directivo: int, courseid: int, cmid: int, id_reporte_directivo: int
 ) -> None:
     """Asocia un directivo con el reporte de su IE. Un registro único por
-    (cod_modular, userid_directivo)"""
+    (cod_modular, userid_directivo) -- cada consulta posterior actualiza
+    fecha_consulta (y courseid/cmid/id_reporte_directivo, por si cambian)
+    en vez de ignorarse, para que la columna refleje la ÚLTIMA consulta
+    real y no solo la primera."""
     query = """
         INSERT INTO f4_consultas_directivo
             (cod_modular, userid_directivo, courseid, cmid, id_reporte_directivo)
         VALUES (%(cod_modular)s, %(userid)s, %(courseid)s, %(cmid)s, %(id_reporte)s)
-        ON CONFLICT (cod_modular, userid_directivo) DO NOTHING
+        ON CONFLICT (cod_modular, userid_directivo) DO UPDATE SET
+            courseid = EXCLUDED.courseid,
+            cmid = EXCLUDED.cmid,
+            id_reporte_directivo = EXCLUDED.id_reporte_directivo,
+            fecha_consulta = now()
     """
     async with pool_cache.connection() as conn:
         await conn.execute(query, {
