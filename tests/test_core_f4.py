@@ -106,6 +106,25 @@ def test_interpretacion_final_siempre_usa_oracion_de_python():
     )
 
 
+def test_clasificar_fortalezas_n_es_el_numerador_no_el_total():
+    """Bug real observado en producción: 'Mediación y evaluación
+    formativa' salía como '5 de 5 (60%)' -- imposible, si fueran 5 de 5
+    el % sería 100%. 'n' debe ser el conteo de sesiones en Logrado o
+    Destacado (el numerador), no el total de sesiones válidas del
+    aspecto (eso es 'n_total', que aquí no corresponde a este campo)."""
+    filas = (
+        [_fila(i, 4, "logrado") for i in range(3)]
+        + [_fila(i, 4, "en_desarrollo") for i in range(3, 5)]
+    )
+    distribucion = core.calcular_distribucion_por_criterio(filas)
+    fortalezas = core.clasificar_fortalezas(distribucion)
+
+    assert len(fortalezas) == 1
+    assert fortalezas[0]["pct"] == 60
+    assert fortalezas[0]["n"] == 3  # 3 sesiones en Logrado/Destacado de 5 totales
+    assert fortalezas[0]["n"] != distribucion[0]["n"]  # nunca el total (5)
+
+
 def test_cp02_distribucion_c3():
     """C3: 6 Inicio, 9 Desarrollo, 6 Logrado, 1 Destacado -> 27.3%; 40.9%;
     27.3%; 4.5%; agrupado 68.2% y 31.8%."""
