@@ -491,28 +491,39 @@ def _normalizar_nivel_obtenido(rows: list[dict]) -> None:
 
 async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str, nivel_educativo: Optional[str] = None) -> int:
     """
-    Cuenta cuántos docentes DISTINTOS tienen al menos una evidencia
-    'success' para esta IE, sin traer las filas completas. Más liviana
-    que obtener_filas_vista + agrupar_por_docente -- usada por el
-    endpoint de consulta (que debe ser rápido) para decidir la acción
-    sin pagar el costo de traer todo el detalle por criterio. Si
-    nivel_educativo es None, cuenta los 3 niveles juntos (usado para el
-    mínimo de activación de UMBRAL_MUESTRA_INSUFICIENTE sobre la IE
-    completa).
+    Cuenta cuántos docentes DISTINTOS tienen evidencia 'success' completa
+    (todas sus filas con criterion_index no nulo) para esta IE, sin traer
+    las filas completas. Más liviana que obtener_filas_vista +
+    agrupar_por_docente -- usada por el endpoint de consulta (que debe
+    ser rápido) para decidir la acción sin pagar el costo de traer todo
+    el detalle por criterio. Si nivel_educativo es None, cuenta los 3
+    niveles juntos (usado para el mínimo de activación de
+    UMBRAL_MUESTRA_INSUFICIENTE sobre la IE completa).
+
+    Un docente con alguna fila 'success' sin criterion_index (carga de F2
+    todavía en curso) NO cuenta como evaluado -- misma regla que
+    _excluir_docentes_con_registro_incompleto usa al generar el reporte,
+    para que el conteo que decide "hay novedades, regenerar" y el
+    contenido real del reporte nunca queden desalineados.
     """
     cmids_validos = _cmids_docentes_configurados()
     if not cmids_validos:
         return 0
 
     query = """
+        WITH filas AS (
+            SELECT user_id, criterion_index
+            FROM public.vw_processing_brechas_ebr
+            WHERE nombre_ie = %(nombre_ie)s
+              AND "región" = %(region)s
+              AND distrito IS NOT DISTINCT FROM %(distrito)s
+              AND cmid = ANY(%(cmids_validos)s)
+              AND status = 'success'
+              AND (%(nivel_educativo)s::text IS NULL OR nivel_educativo = %(nivel_educativo)s::text)
+        )
         SELECT COUNT(DISTINCT user_id) AS total
-        FROM public.vw_processing_brechas_ebr
-        WHERE nombre_ie = %(nombre_ie)s
-          AND "región" = %(region)s
-          AND distrito IS NOT DISTINCT FROM %(distrito)s
-          AND cmid = ANY(%(cmids_validos)s)
-          AND status = 'success'
-          AND (%(nivel_educativo)s::text IS NULL OR nivel_educativo = %(nivel_educativo)s::text)
+        FROM filas
+        WHERE user_id NOT IN (SELECT user_id FROM filas WHERE criterion_index IS NULL)
     """
     async with pool_datos.connection() as conn:
         row = await (await conn.execute(
@@ -547,6 +558,25 @@ def filas_validas(filas: list[dict]) -> list[dict]:
     (distribución por aspecto, brechas, fortalezas): esos cálculos nunca
     deben incluir evidencia no válida o sin entrega real."""
     return [f for f in filas if f["status"] == "success"]
+
+
+def _excluir_docentes_con_registro_incompleto(filas: list[dict]) -> list[dict]:
+    """Si un docente tiene alguna fila 'success' sin criterion_index, su
+    carga en la vista todavía está en curso (F2 parece insertar la fila
+    del docente antes de completar el criterio) -- se excluye al docente
+    COMPLETO de este cálculo, no solo la fila incompleta. Contar solo sus
+    otros aspectos ya cargados produciría un 'n de N' distinto entre
+    secciones para el mismo docente. En el siguiente refresco de caché,
+    cuando la carga termine, vuelve a contarse con normalidad."""
+    por_docente = agrupar_por_docente(filas)
+    incompletos = {
+        user_id
+        for user_id, filas_docente in por_docente.items()
+        if any(f["status"] == "success" and f["criterion_index"] is None for f in filas_docente)
+    }
+    if incompletos:
+        log.warning("docentes_con_registro_incompleto_excluidos", user_ids=sorted(incompletos))
+    return [f for f in filas if f["user_id"] not in incompletos]
 
 
 def _extraer_retroalimentaciones(filas_por_docente: dict[int, list[dict]]) -> list[str]:
@@ -630,7 +660,7 @@ def seleccionar_brechas_globales(filas_docente: list[dict]) -> list[str]:
         key=lambda f: (
             -PRIORIDAD_TIPO.get(f["tipo_brecha"], 0),
             -PRIORIDAD_NIVEL.get(f["nivel_obtenido"], 0),
-            f["criterion_index"],
+            f["criterion_index"] if f["criterion_index"] is not None else 999,
         ),
     )
     return [f["brecha"] for f in candidatas_ordenadas[:2]]
@@ -647,6 +677,13 @@ def calcular_distribucion_por_criterio(filas: list[dict]) -> list[dict]:
 
     for fila in filas:
         c = fila["criterion_index"]
+        if c is None:
+            # Fila 'success' pero sin criterion_index -- registro
+            # incompleto en la vista de origen. Se descarta (no se puede
+            # atribuir a ningún aspecto) en vez de romper el ordenamiento
+            # o distorsionar los conteos.
+            log.warning("fila_sin_criterion_index_descartada", user_id=fila.get("user_id"))
+            continue
         nivel = fila["nivel_obtenido"]
         conteos = por_criterio.setdefault(
             c, {"inicio": 0, "en_desarrollo": 0, "logrado": 0, "destacado": 0}
@@ -1406,6 +1443,8 @@ async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrit
     todas_las_filas = await obtener_filas_vista(nombre_ie, region, distrito)
     if not todas_las_filas:
         raise SinDatosDisponiblesError(f"Sin datos en la vista para {cod_modular}")
+
+    todas_las_filas = _excluir_docentes_con_registro_incompleto(todas_las_filas)
 
     n_docentes_total = await contar_docentes_total(nombre_ie, region, distrito)
     estados = clasificar_evidencias_por_estado(todas_las_filas, n_docentes_total)
