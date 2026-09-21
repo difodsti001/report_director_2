@@ -512,7 +512,7 @@ async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str, 
 
     query = """
         WITH filas AS (
-            SELECT user_id, criterion_index
+            SELECT user_id, criterion_index, nivel_obtenido, nivel_educativo
             FROM public.vw_processing_brechas_ebr
             WHERE nombre_ie = %(nombre_ie)s
               AND "región" = %(region)s
@@ -523,7 +523,10 @@ async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str, 
         )
         SELECT COUNT(DISTINCT user_id) AS total
         FROM filas
-        WHERE user_id NOT IN (SELECT user_id FROM filas WHERE criterion_index IS NULL)
+        WHERE user_id NOT IN (
+            SELECT user_id FROM filas
+            WHERE criterion_index IS NULL OR nivel_obtenido IS NULL OR nivel_educativo IS NULL
+        )
     """
     async with pool_datos.connection() as conn:
         row = await (await conn.execute(
@@ -560,19 +563,30 @@ def filas_validas(filas: list[dict]) -> list[dict]:
     return [f for f in filas if f["status"] == "success"]
 
 
+_COLUMNAS_REQUERIDAS_SI_SUCCESS = ("criterion_index", "nivel_obtenido", "nivel_educativo")
+
+
 def _excluir_docentes_con_registro_incompleto(filas: list[dict]) -> list[dict]:
-    """Si un docente tiene alguna fila 'success' sin criterion_index, su
-    carga en la vista todavía está en curso (F2 parece insertar la fila
-    del docente antes de completar el criterio) -- se excluye al docente
-    COMPLETO de este cálculo, no solo la fila incompleta. Contar solo sus
-    otros aspectos ya cargados produciría un 'n de N' distinto entre
-    secciones para el mismo docente. En el siguiente refresco de caché,
-    cuando la carga termine, vuelve a contarse con normalidad."""
+    """Si un docente tiene alguna fila 'success' con alguna columna clave
+    en NULL (criterion_index, nivel_obtenido o nivel_educativo), su carga
+    en la vista todavía está en curso (F2 parece insertar la fila del
+    docente antes de completarla) -- se excluye al docente COMPLETO de
+    este cálculo, no solo la fila incompleta. Contar solo sus otros
+    aspectos ya cargados produciría un 'n de N' distinto entre secciones
+    para el mismo docente (o, en el caso de nivel_educativo, haría que
+    esa fila desaparezca silenciosamente de la sección de lectura por
+    nivel sin que el resto del reporte se entere). En el siguiente
+    refresco de caché, cuando la carga termine, vuelve a contarse con
+    normalidad."""
     por_docente = agrupar_por_docente(filas)
     incompletos = {
         user_id
         for user_id, filas_docente in por_docente.items()
-        if any(f["status"] == "success" and f["criterion_index"] is None for f in filas_docente)
+        if any(
+            f["status"] == "success" and f.get(col) is None
+            for f in filas_docente
+            for col in _COLUMNAS_REQUERIDAS_SI_SUCCESS
+        )
     }
     if incompletos:
         log.warning("docentes_con_registro_incompleto_excluidos", user_ids=sorted(incompletos))
