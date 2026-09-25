@@ -309,6 +309,12 @@ UMBRAL_MUESTRA_INSUFICIENTE = 5
 # No es un umbral de prioridad -- por debajo de él, la necesidad puede
 # existir en la distribución pero no aparece en esa tabla.
 UMBRAL_NECESIDAD_FRECUENTE_PCT = 30
+# Cobertura mínima (sobre el total de docentes de la IE) para generar el
+# reporte sin esperar más evaluaciones -- ver _debe_esperar_mas_docentes.
+# Complementa a UMBRAL_MUESTRA_INSUFICIENTE: ese piso absoluto (5) por sí
+# solo es insuficiente en IEs grandes (5 de 100 docentes es 5% de
+# cobertura, poco representativo institucionalmente).
+UMBRAL_COBERTURA_MINIMA_PCT = 35
 
 # Cursos y cmids de docentes
 CMIDS_DOCENTES_POR_CURSO: dict[int, list[int] | None] = {
@@ -1645,15 +1651,36 @@ async def registrar_consulta(
 # Puntos de entrada
 # =============================================================================
 
+def _debe_esperar_mas_docentes(n_actual: int, pct_cobertura_actual: int) -> bool:
+    """Decide si /reporte/consultar debe indicarle al frontend que espere
+    más docentes evaluados en vez de generar el reporte ya.
+
+    Se exige alcanzar AMBOS umbrales -- el piso absoluto
+    (UMBRAL_MUESTRA_INSUFICIENTE) y el de cobertura proporcional
+    (UMBRAL_COBERTURA_MINIMA_PCT) -- porque el piso absoluto por sí solo
+    es insuficiente en IEs grandes: 5 docentes evaluados en una IE de 100
+    son solo 5% de cobertura, poco representativo para un reporte
+    institucional.
+
+    Excepción: si ya se evaluó al 100% de la plana docente de la IE, se
+    genera igual aunque no se hayan alcanzado ni los 5 ni el 35% -- en
+    IEs muy pequeñas (menos docentes en total que el piso o que el %
+    mínimo) ninguno de los dos umbrales se alcanzaría nunca, así que
+    evaluar a todos sin excepción siempre habilita el reporte."""
+    if pct_cobertura_actual >= 100:
+        return False
+    return n_actual < UMBRAL_MUESTRA_INSUFICIENTE or pct_cobertura_actual < UMBRAL_COBERTURA_MINIMA_PCT
+
+
 async def consultar_reporte_existente(userid: int) -> dict:
     """
     GET /reporte/consultar -- endpoint rápido de solo lectura, que además
     decide qué debe hacer el frontend a continuación, sin generar nada
     él mismo (nunca toca el LLM). Cuatro situaciones:
 
-      1. No hay reporte, y ya hay >= UMBRAL_MUESTRA_INSUFICIENTE docentes
-         con evidencia válida en la IE completa -> accion="generar" (el
-         frontend llama a POST /reporte/generar automáticamente, sin
+      1. No hay reporte, y ya se alcanzaron los umbrales mínimos de
+         evaluación (ver _debe_esperar_mas_docentes) -> accion="generar"
+         (el frontend llama a POST /reporte/generar automáticamente, sin
          botón visible).
       2. Hay reporte, y el número de docentes con evidencia válida no
          cambió desde que se generó -> accion="mostrar", reporte vigente
@@ -1661,14 +1688,17 @@ async def consultar_reporte_existente(userid: int) -> dict:
       3. Hay reporte, pero el número de docentes con evidencia válida
          cambió -> accion="generar" (el frontend dispara la
          regeneración).
-      4. No hay reporte, y aún no se llega al mínimo de docentes
-         evaluados NI se cubrió el 100% de la plana docente de la IE
-         completa -> accion="esperar_docentes". Si una IE ya evaluó a
-         TODOS sus docentes (aunque sean menos de 5 en total), no tiene
-         sentido esperar más -- se genera igual, marcado como
-         muestra_suficiente=False en el reporte.
+      4. No hay reporte, y todavía no se alcanzan los umbrales mínimos
+         -> accion="esperar_docentes". Si una IE ya evaluó al 100% de su
+         plana docente (aunque nunca llegue a los umbrales mínimos por
+         tener muy pocos docentes en total), no tiene sentido esperar
+         más -- se genera igual, marcado como muestra_suficiente=False
+         en el reporte.
 
-    Retorna siempre {"accion": ..., "reporte": ... | None, "n_docentes_evaluados": ...}
+    Retorna siempre {"accion": ..., "reporte": ... | None,
+    "n_docentes_evaluados": ..., "n_docentes_total": ...,
+    "pct_cobertura_actual": ...} -- los dos últimos permiten que el
+    frontend explique el motivo de la espera (ver showEsperandoDocentes).
     """
     inicio = time.monotonic()
     log.info("reporte_consultado", userid=userid)
@@ -1685,8 +1715,7 @@ async def consultar_reporte_existente(userid: int) -> dict:
     duracion_ms = round((time.monotonic() - inicio) * 1000)
 
     if guardado is None:
-        debe_esperar = n_actual < UMBRAL_MUESTRA_INSUFICIENTE and pct_cobertura_actual < 100
-        if debe_esperar:
+        if _debe_esperar_mas_docentes(n_actual, pct_cobertura_actual):
             log.info(
                 "consulta_esperar_docentes",
                 cod_modular=cod_modular,
@@ -1694,7 +1723,13 @@ async def consultar_reporte_existente(userid: int) -> dict:
                 pct_cobertura=pct_cobertura_actual,
                 duracion_ms=duracion_ms,
             )
-            return {"accion": "esperar_docentes", "reporte": None, "n_docentes_evaluados": n_actual}
+            return {
+                "accion": "esperar_docentes",
+                "reporte": None,
+                "n_docentes_evaluados": n_actual,
+                "n_docentes_total": n_total,
+                "pct_cobertura_actual": pct_cobertura_actual,
+            }
 
         log.info(
             "consulta_debe_generar",
@@ -1703,7 +1738,13 @@ async def consultar_reporte_existente(userid: int) -> dict:
             n_docentes_evaluados=n_actual,
             duracion_ms=duracion_ms,
         )
-        return {"accion": "generar", "reporte": None, "n_docentes_evaluados": n_actual}
+        return {
+            "accion": "generar",
+            "reporte": None,
+            "n_docentes_evaluados": n_actual,
+            "n_docentes_total": n_total,
+            "pct_cobertura_actual": pct_cobertura_actual,
+        }
 
     if n_actual != guardado["n_docentes_evaluados"]:
         log.info(
@@ -1714,10 +1755,22 @@ async def consultar_reporte_existente(userid: int) -> dict:
             n_docentes_evaluados=n_actual,
             duracion_ms=duracion_ms,
         )
-        return {"accion": "generar", "reporte": None, "n_docentes_evaluados": n_actual}
+        return {
+            "accion": "generar",
+            "reporte": None,
+            "n_docentes_evaluados": n_actual,
+            "n_docentes_total": n_total,
+            "pct_cobertura_actual": pct_cobertura_actual,
+        }
 
     log.info("consulta_mostrar_vigente", cod_modular=cod_modular, duracion_ms=duracion_ms)
-    return {"accion": "mostrar", "reporte": guardado["reporte_json"], "n_docentes_evaluados": n_actual}
+    return {
+        "accion": "mostrar",
+        "reporte": guardado["reporte_json"],
+        "n_docentes_evaluados": n_actual,
+        "n_docentes_total": n_total,
+        "pct_cobertura_actual": pct_cobertura_actual,
+    }
 
 
 async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> dict:

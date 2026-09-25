@@ -334,4 +334,33 @@ def test_denominacion_visible_sin_codigo():
     assert core._nombre_criterio("C4") == "Mediación y evaluación formativa"
     assert not core._nombre_criterio("C4").startswith("C4")
     assert core._nombre_brecha("B1") == "Coherencia del diseño con la información del diagnóstico"
+
+
+# =============================================================================
+# _debe_esperar_mas_docentes -- umbral combinado (piso absoluto + cobertura)
+# =============================================================================
+
+def test_debe_esperar_ie_grande_no_genera_solo_con_el_piso_absoluto():
+    """IE de 100 docentes: 5 evaluados (5%) NO alcanza -- antes del cambio
+    esto sí disparaba la generación, dejando un reporte poco representativo."""
+    assert core._debe_esperar_mas_docentes(n_actual=5, pct_cobertura_actual=5) is True
+
+
+def test_debe_esperar_ie_grande_genera_al_llegar_al_35_por_ciento():
+    assert core._debe_esperar_mas_docentes(n_actual=35, pct_cobertura_actual=35) is False
+
+
+def test_debe_esperar_ie_mediana_sigue_dominada_por_el_piso_de_5():
+    """IE de 10 docentes: en 5 evaluados (50%) ya se supera el 35% --
+    comportamiento sin cambios respecto de antes para IEs chicas/medianas."""
+    assert core._debe_esperar_mas_docentes(n_actual=5, pct_cobertura_actual=50) is False
+    assert core._debe_esperar_mas_docentes(n_actual=3, pct_cobertura_actual=30) is True
+
+
+def test_debe_esperar_ie_muy_pequena_escapa_con_100_por_ciento():
+    """IE de 3 docentes: nunca llega a 5 evaluados ni podría alcanzar el
+    35% sin ser también el 100% -- el escape del 100% sigue habilitando
+    el reporte igual que antes."""
+    assert core._debe_esperar_mas_docentes(n_actual=2, pct_cobertura_actual=67) is True
+    assert core._debe_esperar_mas_docentes(n_actual=3, pct_cobertura_actual=100) is False
     assert not core._nombre_brecha("B1").startswith("B1")
