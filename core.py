@@ -1808,8 +1808,16 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
     )
 
     if guardado is not None and guardado["estado"] == "generado":
-        filas_actuales = filas_validas(await obtener_filas_vista(nombre_ie, region, distrito))
-        n_actual = len(agrupar_por_docente(filas_actuales))
+        # Misma fuente de verdad que consultar_reporte_existente
+        # (contar_docentes_evaluados ya excluye por SQL a los docentes con
+        # carga incompleta en F2). Antes se recontaba a mano con
+        # filas_validas + agrupar_por_docente, sin esa exclusión -- eso
+        # producía un conteo distinto al que generar_reporte usa
+        # internamente (ver _excluir_docentes_con_registro_incompleto),
+        # invalidando el caché y regenerando con el LLM en cada llamada
+        # mientras un docente quedara con la carga a medias, aunque nada
+        # hubiera cambiado realmente.
+        n_actual = await contar_docentes_evaluados(nombre_ie, region, distrito)
         debe_generar = n_actual != guardado["n_docentes_evaluados"]
         if debe_generar:
             log.info(
