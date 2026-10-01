@@ -230,6 +230,33 @@
       background: rgba(var(--status-critical-rgb), 0.10);
     }
 
+    /* Advertencia obligatoria de cobertura (COB_BAJO_UMBRAL, adenda sec.
+     * 8.1) -- parte del contenido del reporte, no un error de la app, así
+     * que es un bloque propio (distinto de .status-banner) y siempre
+     * visible al inicio, antes de "1. Panorama general". */
+    .advertencia-cobertura {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      border: 1px solid var(--status-warning);
+      background: rgba(var(--status-warning-rgb), 0.12);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 20px;
+    }
+    .advertencia-cobertura .icono {
+      font-size: 1.2rem;
+      line-height: 1;
+    }
+    .advertencia-cobertura .texto {
+      font-size: 0.9rem;
+      line-height: 1.5;
+      color: var(--text-primary);
+    }
+    .advertencia-cobertura .texto strong {
+      color: var(--status-warning);
+    }
+
     .loading {
       color: var(--text-secondary);
       padding: 24px 0;
@@ -628,11 +655,6 @@ const CTX = {
   cmid: params.get("cmid"),
 };
 
-// Debe coincidir con core.UMBRAL_COBERTURA_MINIMA_PCT del backend. Solo
-// se usa para el texto de progreso; la decisión real siempre la toma el
-// backend (accion="esperar_docentes" / 409).
-const UMBRAL_COBERTURA_MINIMA_PCT = 35;
-
 /* ---------------------------------------------------------------------
  * DOM references
  * ------------------------------------------------------------------- */
@@ -726,20 +748,35 @@ function showEsperandoDocentes(info) {
   const n = info?.n_docentes_evaluados ?? 0;
   const nTotal = info?.n_docentes_total;
   const pct = info?.pct_cobertura_actual;
+  const umbralRequerido = info?.umbral_requerido;
   el.contextName.textContent = "Esperando Sesiones de aprendizaje V1…";
   el.btnRefresh.hidden = true;
 
-  // La decisión real (ver _debe_esperar_mas_docentes en el backend)
-  // combina un piso absoluto de docentes con el % de cobertura, pero acá
-  // solo se comunica la cobertura -- es el dato relevante para el
-  // directivo. Si por algún motivo no llega n_docentes_total/pct, se cae
-  // a un mensaje simple con el conteo de docentes evaluados.
-  el.esperandoDocentesText.textContent = (nTotal && pct !== undefined)
-    ? `Aún no se alcanza la cobertura mínima para generar el reporte institucional: se requiere el ` +
-      `${UMBRAL_COBERTURA_MINIMA_PCT}% de cobertura. Cobertura actual: ${pct}% (${n} de ${nTotal} docentes). ` +
-      "El reporte se generará automáticamente en cuanto se alcance el mínimo."
-    : `Aún no se alcanza la cobertura mínima para generar el reporte institucional (${n} docentes ` +
-      "evaluados hasta el momento). El reporte se generará automáticamente en cuanto se alcance el mínimo.";
+  // Con la adenda, accion="esperar_docentes" ahora solo ocurre en
+  // COB_CONFIDENCIAL: menos de 5 evidencias válidas, o menos de 5
+  // docentes en la IE (banda "B0") -- el piso de 5 protege la
+  // confidencialidad de los resultados (ver core._debe_esperar_mas_docentes).
+  // A partir de 5, el reporte YA se genera (con advertencia si no llega
+  // al umbral de su banda), así que el mensaje no debe dar a entender que
+  // hay que esperar hasta umbral_requerido -- ese número es el que hace
+  // al reporte representativo, no el que habilita su generación.
+  let mensaje;
+  if (nTotal && umbralRequerido == null) {
+    // Banda B0: IE con menos de 5 docentes en total, sin umbral numérico.
+    mensaje = `Su institución tiene ${nTotal} docentes participantes. El reporte se generará cuando ` +
+      `se haya evaluado a todos (${n} de ${nTotal} hasta el momento).`;
+  } else if (nTotal && pct !== undefined && umbralRequerido != null) {
+    const faltanParaElMinimo = Math.max(5 - n, 0);
+    mensaje = `Su institución cuenta con ${n} de las 5 sesiones mínimas para generar el reporte ` +
+      `(${nTotal} docentes participantes${faltanParaElMinimo > 0 ? `; faltan ${faltanParaElMinimo}` : ""}). ` +
+      "En cuanto se alcancen esas 5 sesiones, el reporte se generará automáticamente. Sin embargo, " +
+      "con tan pocas sesiones revisadas, el reporte todavía no reflejará bien a toda la institución " +
+      `-- para eso se necesitan al menos ${umbralRequerido} sesiones válidas.`;
+  } else {
+    mensaje = `Aún no se alcanza el mínimo de 5 sesiones válidas para generar el reporte institucional ` +
+      `(${n} hasta el momento). El reporte se generará automáticamente en cuanto se alcance el mínimo.`;
+  }
+  el.esperandoDocentesText.textContent = mensaje;
   showOnly("esperando-docentes");
 }
 
@@ -967,8 +1004,11 @@ function render(data) {
   lastRenderedData = data;
   el.contextName.textContent = data.nombre_ie || "—";
 
+  const advertencia = renderAdvertenciaCobertura(data);
+
   el.reporteContainer.replaceChildren(
     renderEncabezado(data),
+    ...(advertencia ? [advertencia] : []),
     renderPanoramaGeneral(data),
     renderResultadoGeneral(data),
     renderInterpretacion(data),
@@ -1005,6 +1045,32 @@ function statTile(label, value, opts = {}) {
   }
 
   return tile;
+}
+
+/* Advertencia obligatoria de cobertura (COB_BAJO_UMBRAL, adenda RE-04 /
+ * sección 8.1). Retorna null si no aplica -- el llamador la omite del
+ * reporte en ese caso. Cuando aplica, no se omite ni se oculta: siempre
+ * va al inicio del reporte, antes de "1. Panorama general". */
+function renderAdvertenciaCobertura(data) {
+  if (!data.advertencia_cobertura) return null;
+
+  const div = document.createElement("div");
+  div.className = "advertencia-cobertura";
+  div.setAttribute("role", "alert");
+
+  const icono = document.createElement("span");
+  icono.className = "icono";
+  icono.textContent = "⚠️";
+
+  const texto = document.createElement("p");
+  texto.className = "texto";
+  const etiqueta = document.createElement("strong");
+  etiqueta.textContent = "Advertencia de cobertura. ";
+  texto.appendChild(etiqueta);
+  texto.appendChild(document.createTextNode(data.advertencia_cobertura));
+
+  div.append(icono, texto);
+  return div;
 }
 
 /* "Reporte general de la institución" (encabezado, ficha técnica punto 10) */

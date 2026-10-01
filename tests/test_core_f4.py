@@ -337,30 +337,94 @@ def test_denominacion_visible_sin_codigo():
 
 
 # =============================================================================
-# _debe_esperar_mas_docentes -- umbral combinado (piso absoluto + cobertura)
+# _clasificar_cobertura -- bandas de la Adenda F4-ADENDA-EMISION-RI-EBRJEC26
+# v1.0, sección 4. Casos tomados directo de los CP13-CP18 de la propia
+# adenda (sección 14, casos de prueba de aceptación).
 # =============================================================================
 
-def test_debe_esperar_ie_grande_no_genera_solo_con_el_piso_absoluto():
-    """IE de 100 docentes: 5 evaluados (5%) NO alcanza -- antes del cambio
-    esto sí disparaba la generación, dejando un reporte poco representativo."""
-    assert core._debe_esperar_mas_docentes(n_actual=5, pct_cobertura_actual=5) is True
+def test_cp13_ie_grande_banda_b5_bajo_umbral():
+    """N=96; 5 V1 válidas -> Banda B5; umbral 58; COB_BAJO_UMBRAL."""
+    r = core._clasificar_cobertura(n_evidencias_validas=5, n_docentes_total=96)
+    assert r == {"banda_aplicada": "B5", "umbral_requerido": 58, "estado_cobertura": "COB_BAJO_UMBRAL"}
 
 
-def test_debe_esperar_ie_grande_genera_al_llegar_al_35_por_ciento():
-    assert core._debe_esperar_mas_docentes(n_actual=35, pct_cobertura_actual=35) is False
+def test_cp14_ie_banda_b3_cobertura_suficiente():
+    """N=40; 28 V1 válidas -> Banda B3; umbral 28; COB_SUFICIENTE."""
+    r = core._clasificar_cobertura(n_evidencias_validas=28, n_docentes_total=40)
+    assert r == {"banda_aplicada": "B3", "umbral_requerido": 28, "estado_cobertura": "COB_SUFICIENTE"}
 
 
-def test_debe_esperar_ie_mediana_sigue_dominada_por_el_piso_de_5():
-    """IE de 10 docentes: en 5 evaluados (50%) ya se supera el 35% --
-    comportamiento sin cambios respecto de antes para IEs chicas/medianas."""
-    assert core._debe_esperar_mas_docentes(n_actual=5, pct_cobertura_actual=50) is False
-    assert core._debe_esperar_mas_docentes(n_actual=3, pct_cobertura_actual=30) is True
+def test_cp15_ie_banda_b3_bajo_umbral_por_una_evidencia():
+    """N=40; 27 V1 válidas -> COB_BAJO_UMBRAL por una sola evidencia de diferencia."""
+    r = core._clasificar_cobertura(n_evidencias_validas=27, n_docentes_total=40)
+    assert r["estado_cobertura"] == "COB_BAJO_UMBRAL"
+    assert r["umbral_requerido"] == 28
 
 
-def test_debe_esperar_ie_muy_pequena_escapa_con_100_por_ciento():
-    """IE de 3 docentes: nunca llega a 5 evaluados ni podría alcanzar el
-    35% sin ser también el 100% -- el escape del 100% sigue habilitando
-    el reporte igual que antes."""
-    assert core._debe_esperar_mas_docentes(n_actual=2, pct_cobertura_actual=67) is True
-    assert core._debe_esperar_mas_docentes(n_actual=3, pct_cobertura_actual=100) is False
+def test_cp16_redondeo_umbral_siempre_hacia_arriba():
+    """N=12; 10 V1 válidas -> Banda B1; umbral ceil(0.85*12)=10.2->11; COB_BAJO_UMBRAL."""
+    r = core._clasificar_cobertura(n_evidencias_validas=10, n_docentes_total=12)
+    assert r == {"banda_aplicada": "B1", "umbral_requerido": 11, "estado_cobertura": "COB_BAJO_UMBRAL"}
+
+
+def test_cp17_confidencial_por_pocas_evidencias_aunque_n_sea_grande():
+    """N=30; 4 V1 válidas -> COB_CONFIDENCIAL (n<5) aunque N>=5."""
+    r = core._clasificar_cobertura(n_evidencias_validas=4, n_docentes_total=30)
+    assert r["estado_cobertura"] == "COB_CONFIDENCIAL"
+
+
+def test_cp18_banda_b0_siempre_confidencial_aunque_cobertura_sea_100():
+    """N=4; 4 V1 válidas (100% de cobertura) -> Banda B0; COB_CONFIDENCIAL igual."""
+    r = core._clasificar_cobertura(n_evidencias_validas=4, n_docentes_total=4)
+    assert r == {"banda_aplicada": "B0", "umbral_requerido": None, "estado_cobertura": "COB_CONFIDENCIAL"}
+
+
+# =============================================================================
+# _debe_esperar_mas_docentes -- RE-03/RE-04: deja de esperar tanto en
+# COB_SUFICIENTE como en COB_BAJO_UMBRAL (este último se emite con
+# advertencia). Solo COB_CONFIDENCIAL sigue esperando (banda B0 espera
+# hasta el 100%, ya que nunca sale de COB_CONFIDENCIAL por definición).
+# =============================================================================
+
+def test_debe_esperar_ie_grande_ya_no_espera_en_bajo_umbral():
+    """IE de 96 docentes: 5 evaluados es COB_BAJO_UMBRAL (no alcanza el
+    umbral de banda B5, 58) -- RE-04 exige emitir igual, con advertencia,
+    no seguir esperando."""
+    assert core._debe_esperar_mas_docentes(n_actual=5, n_total=96) is False
+
+
+def test_debe_esperar_ie_grande_genera_al_llegar_al_umbral_de_su_banda():
+    assert core._debe_esperar_mas_docentes(n_actual=58, n_total=96) is False
+
+
+def test_debe_esperar_sigue_esperando_en_confidencial():
+    """n=3 < 5 en una IE de 96 docentes -- COB_CONFIDENCIAL, todavía sin
+    implementar (fuera de alcance de este cambio); sigue esperando."""
+    assert core._debe_esperar_mas_docentes(n_actual=3, n_total=96) is True
+
+
+def test_debe_esperar_banda_b0_espera_hasta_evaluar_a_todos():
+    """IE de 3 docentes (banda B0): nunca sale de COB_CONFIDENCIAL -- se
+    conserva el escape anterior, deja de esperar solo al llegar al 100%."""
+    assert core._debe_esperar_mas_docentes(n_actual=2, n_total=3) is True
+    assert core._debe_esperar_mas_docentes(n_actual=3, n_total=3) is False
+
+
+# =============================================================================
+# _construir_advertencia_cobertura -- adenda, sección 8.1, variante RI 1
+# =============================================================================
+
+def test_construir_advertencia_cobertura_texto_exacto():
+    texto = core._construir_advertencia_cobertura(
+        n_evidencias_validas=5, umbral_requerido=58, n_docentes_total=96, pct_cobertura=5,
+    )
+    assert texto == (
+        "Este reporte se elaboró con 5 de las 58 sesiones válidas requeridas para representar "
+        "a su institución (5 de 96 docentes participantes; 5%). Los resultados describen "
+        "únicamente las sesiones revisadas y no pueden generalizarse al conjunto de docentes. "
+        "Por ello, los hallazgos de este reporte deben tratarse solo como hipótesis por "
+        "contrastar con otras fuentes de su institución —MPE, ENLA, evidencias de aprendizaje "
+        "de los estudiantes, registros de monitoreo y acompañamiento— antes de utilizarse en "
+        "el Diagnóstico institucional y en la RTC 1."
+    )
     assert not core._nombre_brecha("B1").startswith("B1")

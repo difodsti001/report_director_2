@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -309,12 +310,68 @@ UMBRAL_MUESTRA_INSUFICIENTE = 5
 # No es un umbral de prioridad -- por debajo de él, la necesidad puede
 # existir en la distribución pero no aparece en esa tabla.
 UMBRAL_NECESIDAD_FRECUENTE_PCT = 30
-# Cobertura mínima (sobre el total de docentes de la IE) para generar el
-# reporte sin esperar más evaluaciones -- ver _debe_esperar_mas_docentes.
-# Complementa a UMBRAL_MUESTRA_INSUFICIENTE: ese piso absoluto (5) por sí
-# solo es insuficiente en IEs grandes (5 de 100 docentes es 5% de
-# cobertura, poco representativo institucionalmente).
-UMBRAL_COBERTURA_MINIMA_PCT = 35
+# Adenda F4-ADENDA-EMISION-RI-EBRJEC26 v1.0, sección 4 -- reemplaza al
+# umbral fijo que se usaba antes (UMBRAL_COBERTURA_MINIMA_PCT = 35%): el
+# piso absoluto (5) por sí solo es insuficiente en IEs grandes (5 de 100
+# docentes es 5% de cobertura, poco representativo institucionalmente).
+# La adenda establece bandas escalonadas -- el % exigido baja a medida
+# que crece la IE (fundamento estadístico: margen ±10pp al 95% de
+# confianza, con corrección por población finita), aunque el número
+# absoluto de evidencias requeridas sigue subiendo.
+# (N mínimo, N máximo inclusive o None=sin techo, código de banda, % exigido)
+BANDAS_COBERTURA = (
+    (5, 20, "B1", 85),
+    (21, 35, "B2", 80),
+    (36, 50, "B3", 70),
+    (51, 70, "B4", 65),
+    (71, None, "B5", 60),
+)
+
+
+def _clasificar_cobertura(n_evidencias_validas: int, n_docentes_total: int) -> dict:
+    """Clasifica la cobertura de una IE según las bandas de la adenda
+    (sección 4), retornando {"banda_aplicada", "umbral_requerido",
+    "estado_cobertura"}.
+
+    Si n_docentes_total < 5 (banda "B0"), no hay umbral numérico posible
+    -- la adenda establece que ese caso siempre es COB_CONFIDENCIAL, aun
+    con 100% de cobertura (RE-05, CP18): con tan pocos docentes, mostrar
+    cualquier cifra agregada arriesga identificar el resultado de una
+    persona puntual.
+
+    Para el resto, umbral_requerido = máx(UMBRAL_MUESTRA_INSUFICIENTE;
+    ⌈% de la banda × n_docentes_total⌉) (RE-02, redondeo siempre hacia
+    arriba). estado_cobertura es COB_CONFIDENCIAL si no llega ni al piso
+    absoluto de 5, COB_BAJO_UMBRAL si llega a 5 pero no al umbral de la
+    banda, o COB_SUFICIENTE si alcanza el umbral (RE-03/04/05)."""
+    if n_docentes_total < 5:
+        return {
+            "banda_aplicada": "B0",
+            "umbral_requerido": None,
+            "estado_cobertura": "COB_CONFIDENCIAL",
+        }
+
+    for n_min, n_max, codigo, pct in BANDAS_COBERTURA:
+        if n_min <= n_docentes_total and (n_max is None or n_docentes_total <= n_max):
+            banda_aplicada = codigo
+            umbral_requerido = max(
+                UMBRAL_MUESTRA_INSUFICIENTE,
+                math.ceil(pct / 100 * n_docentes_total),
+            )
+            break
+
+    if n_evidencias_validas < UMBRAL_MUESTRA_INSUFICIENTE:
+        estado_cobertura = "COB_CONFIDENCIAL"
+    elif n_evidencias_validas < umbral_requerido:
+        estado_cobertura = "COB_BAJO_UMBRAL"
+    else:
+        estado_cobertura = "COB_SUFICIENTE"
+
+    return {
+        "banda_aplicada": banda_aplicada,
+        "umbral_requerido": umbral_requerido,
+        "estado_cobertura": estado_cobertura,
+    }
 
 # Cursos y cmids de docentes
 CMIDS_DOCENTES_POR_CURSO: dict[int, list[int] | None] = {
@@ -1444,6 +1501,27 @@ def _sin_punto_final(texto: str) -> str:
     return texto.rstrip().rstrip(".")
 
 
+def _construir_advertencia_cobertura(
+    n_evidencias_validas: int, umbral_requerido: int, n_docentes_total: int, pct_cobertura: int
+) -> str:
+    """Advertencia obligatoria para COB_BAJO_UMBRAL (adenda, sección 8.1,
+    variante RI 1) -- texto fijo, armado en Python con las cifras ya
+    calculadas, igual que el resto del proyecto nunca deja que el LLM
+    construya o toque una frase con números. Debe ubicarse al inicio del
+    reporte, antes del Panorama general (RE-04); no se omite ni se
+    traslada solo a la sección de cobertura."""
+    return (
+        f"Este reporte se elaboró con {n_evidencias_validas} de las {umbral_requerido} sesiones "
+        f"válidas requeridas para representar a su institución ({n_evidencias_validas} de "
+        f"{n_docentes_total} docentes participantes; {pct_cobertura}%). Los resultados describen "
+        "únicamente las sesiones revisadas y no pueden generalizarse al conjunto de docentes. Por "
+        "ello, los hallazgos de este reporte deben tratarse solo como hipótesis por contrastar con "
+        "otras fuentes de su institución —MPE, ENLA, evidencias de aprendizaje de los estudiantes, "
+        "registros de monitoreo y acompañamiento— antes de utilizarse en el Diagnóstico "
+        "institucional y en la RTC 1."
+    )
+
+
 # =============================================================================
 # Orquestador de generación
 # =============================================================================
@@ -1480,6 +1558,22 @@ async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrit
             cod_modular=cod_modular,
             n_evidencias_validas=n_evidencias_validas,
             pct_cobertura=pct_cobertura,
+        )
+
+    # Adenda F4-ADENDA-EMISION-RI-EBRJEC26 v1.0, sección 4 y 11 --
+    # clasificación de cobertura por banda.
+    clasificacion_cobertura = _clasificar_cobertura(n_evidencias_validas, n_docentes_total)
+
+    # RE-04/sección 8.1 -- advertencia obligatoria cuando la cobertura está
+    # bajo el umbral de la banda (el reporte se emite igual, no se espera
+    # más). En cualquier otro estado, no aplica.
+    advertencia_cobertura = None
+    if clasificacion_cobertura["estado_cobertura"] == "COB_BAJO_UMBRAL":
+        advertencia_cobertura = _construir_advertencia_cobertura(
+            n_evidencias_validas,
+            clasificacion_cobertura["umbral_requerido"],
+            n_docentes_total,
+            pct_cobertura,
         )
 
     filas_ok = filas_validas(todas_las_filas)
@@ -1549,6 +1643,10 @@ async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrit
         "n_sin_entrega": estados["n_sin_entrega"],
         "pct_cobertura": pct_cobertura,
         "muestra_suficiente": muestra_suficiente,
+        "banda_aplicada": clasificacion_cobertura["banda_aplicada"],
+        "umbral_requerido": clasificacion_cobertura["umbral_requerido"],
+        "estado_cobertura": clasificacion_cobertura["estado_cobertura"],
+        "advertencia_cobertura": advertencia_cobertura,
         "distribucion_por_aspecto": variables["distribucion_por_aspecto"],
         "necesidades_frecuentes": variables["necesidades_frecuentes"],
         "fortalezas": variables["fortalezas"],
@@ -1651,25 +1749,27 @@ async def registrar_consulta(
 # Puntos de entrada
 # =============================================================================
 
-def _debe_esperar_mas_docentes(n_actual: int, pct_cobertura_actual: int) -> bool:
+def _debe_esperar_mas_docentes(n_actual: int, n_total: int) -> bool:
     """Decide si /reporte/consultar debe indicarle al frontend que espere
     más docentes evaluados en vez de generar el reporte ya.
 
-    Se exige alcanzar AMBOS umbrales -- el piso absoluto
-    (UMBRAL_MUESTRA_INSUFICIENTE) y el de cobertura proporcional
-    (UMBRAL_COBERTURA_MINIMA_PCT) -- porque el piso absoluto por sí solo
-    es insuficiente en IEs grandes: 5 docentes evaluados en una IE de 100
-    son solo 5% de cobertura, poco representativo para un reporte
-    institucional.
+    Delega en _clasificar_cobertura (adenda, sección 4): espera mientras
+    no se alcance COB_SUFICIENTE.
 
-    Excepción: si ya se evaluó al 100% de la plana docente de la IE, se
-    genera igual aunque no se hayan alcanzado ni los 5 ni el 35% -- en
-    IEs muy pequeñas (menos docentes en total que el piso o que el %
-    mínimo) ninguno de los dos umbrales se alcanzaría nunca, así que
-    evaluar a todos sin excepción siempre habilita el reporte."""
-    if pct_cobertura_actual >= 100:
+    RE-03/RE-04 de la adenda: tanto COB_SUFICIENTE como COB_BAJO_UMBRAL se
+    emiten ya (este último con la advertencia obligatoria de la sección
+    8.1, ver _construir_advertencia_cobertura) -- solo COB_CONFIDENCIAL
+    sigue esperando, porque su tratamiento (sección 8.3, camino reducido
+    sin cifras) todavía no está implementado.
+
+    Excepción dentro de COB_CONFIDENCIAL: la banda "B0" (n_total < 5)
+    nunca sale de ese estado -- no tiene umbral numérico definido
+    (RE-05/CP18). Se conserva el comportamiento anterior: una vez
+    evaluada TODA la plana docente, no tiene sentido seguir esperando."""
+    estado = _clasificar_cobertura(n_actual, n_total)["estado_cobertura"]
+    if estado != "COB_CONFIDENCIAL":
         return False
-    return n_actual < UMBRAL_MUESTRA_INSUFICIENTE or pct_cobertura_actual < UMBRAL_COBERTURA_MINIMA_PCT
+    return not (n_total > 0 and n_actual >= n_total)
 
 
 async def consultar_reporte_existente(userid: int) -> dict:
@@ -1678,26 +1778,26 @@ async def consultar_reporte_existente(userid: int) -> dict:
     decide qué debe hacer el frontend a continuación, sin generar nada
     él mismo (nunca toca el LLM). Cuatro situaciones:
 
-      1. No hay reporte, y ya se alcanzaron los umbrales mínimos de
-         evaluación (ver _debe_esperar_mas_docentes) -> accion="generar"
-         (el frontend llama a POST /reporte/generar automáticamente, sin
-         botón visible).
+      1. No hay reporte, y ya se alcanzó COB_SUFICIENTE según la banda de
+         cobertura que le corresponde a la IE (ver _clasificar_cobertura,
+         adenda sección 4) -> accion="generar" (el frontend llama a POST
+         /reporte/generar automáticamente, sin botón visible).
       2. Hay reporte, y el número de docentes con evidencia válida no
          cambió desde que se generó -> accion="mostrar", reporte vigente
          tal cual.
       3. Hay reporte, pero el número de docentes con evidencia válida
          cambió -> accion="generar" (el frontend dispara la
          regeneración).
-      4. No hay reporte, y todavía no se alcanzan los umbrales mínimos
-         -> accion="esperar_docentes". Si una IE ya evaluó al 100% de su
-         plana docente (aunque nunca llegue a los umbrales mínimos por
-         tener muy pocos docentes en total), no tiene sentido esperar
-         más -- se genera igual, marcado como muestra_suficiente=False
-         en el reporte.
+      4. No hay reporte, y todavía no se alcanza COB_SUFICIENTE ->
+         accion="esperar_docentes". Excepción: la banda "B0" (IE con
+         menos de 5 docentes en total) nunca llega a COB_SUFICIENTE -- si
+         ya se evaluó al 100% de su plana docente, no tiene sentido
+         esperar más, se genera igual (ver _debe_esperar_mas_docentes).
 
     Retorna siempre {"accion": ..., "reporte": ... | None,
     "n_docentes_evaluados": ..., "n_docentes_total": ...,
-    "pct_cobertura_actual": ...} -- los dos últimos permiten que el
+    "pct_cobertura_actual": ..., "banda_aplicada": ..., "umbral_requerido":
+    ..., "estado_cobertura": ...} -- estos últimos permiten que el
     frontend explique el motivo de la espera (ver showEsperandoDocentes).
     """
     inicio = time.monotonic()
@@ -1711,25 +1811,28 @@ async def consultar_reporte_existente(userid: int) -> dict:
     n_actual = await contar_docentes_evaluados(ie["nombre_ie"], ie["region"], ie["distrito"])
     n_total = await contar_docentes_total(ie["nombre_ie"], ie["region"], ie["distrito"])
     pct_cobertura_actual = round(100 * n_actual / n_total) if n_total > 0 else 0
+    clasificacion = _clasificar_cobertura(n_actual, n_total)
 
     duracion_ms = round((time.monotonic() - inicio) * 1000)
 
+    campos_cobertura = {
+        "n_docentes_evaluados": n_actual,
+        "n_docentes_total": n_total,
+        "pct_cobertura_actual": pct_cobertura_actual,
+        **clasificacion,
+    }
+
     if guardado is None:
-        if _debe_esperar_mas_docentes(n_actual, pct_cobertura_actual):
+        if _debe_esperar_mas_docentes(n_actual, n_total):
             log.info(
                 "consulta_esperar_docentes",
                 cod_modular=cod_modular,
                 n_docentes_evaluados=n_actual,
                 pct_cobertura=pct_cobertura_actual,
+                estado_cobertura=clasificacion["estado_cobertura"],
                 duracion_ms=duracion_ms,
             )
-            return {
-                "accion": "esperar_docentes",
-                "reporte": None,
-                "n_docentes_evaluados": n_actual,
-                "n_docentes_total": n_total,
-                "pct_cobertura_actual": pct_cobertura_actual,
-            }
+            return {"accion": "esperar_docentes", "reporte": None, **campos_cobertura}
 
         log.info(
             "consulta_debe_generar",
@@ -1738,13 +1841,7 @@ async def consultar_reporte_existente(userid: int) -> dict:
             n_docentes_evaluados=n_actual,
             duracion_ms=duracion_ms,
         )
-        return {
-            "accion": "generar",
-            "reporte": None,
-            "n_docentes_evaluados": n_actual,
-            "n_docentes_total": n_total,
-            "pct_cobertura_actual": pct_cobertura_actual,
-        }
+        return {"accion": "generar", "reporte": None, **campos_cobertura}
 
     if n_actual != guardado["n_docentes_evaluados"]:
         log.info(
@@ -1755,22 +1852,10 @@ async def consultar_reporte_existente(userid: int) -> dict:
             n_docentes_evaluados=n_actual,
             duracion_ms=duracion_ms,
         )
-        return {
-            "accion": "generar",
-            "reporte": None,
-            "n_docentes_evaluados": n_actual,
-            "n_docentes_total": n_total,
-            "pct_cobertura_actual": pct_cobertura_actual,
-        }
+        return {"accion": "generar", "reporte": None, **campos_cobertura}
 
     log.info("consulta_mostrar_vigente", cod_modular=cod_modular, duracion_ms=duracion_ms)
-    return {
-        "accion": "mostrar",
-        "reporte": guardado["reporte_json"],
-        "n_docentes_evaluados": n_actual,
-        "n_docentes_total": n_total,
-        "pct_cobertura_actual": pct_cobertura_actual,
-    }
+    return {"accion": "mostrar", "reporte": guardado["reporte_json"], **campos_cobertura}
 
 
 async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> dict:
