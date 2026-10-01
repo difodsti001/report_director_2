@@ -249,12 +249,26 @@
       line-height: 1;
     }
     .advertencia-cobertura .texto {
+      margin: 0;
       font-size: 0.9rem;
       line-height: 1.5;
       color: var(--text-primary);
     }
     .advertencia-cobertura .texto strong {
       color: var(--status-warning);
+    }
+    /* La frase clave ("los hallazgos... hipótesis por contrastar") se
+     * resalta en negrita y en el color de texto normal (negro en modo
+     * claro) -- no en el ámbar de la etiqueta de arriba -- para que
+     * destaque como el punto más importante del texto, no como parte
+     * del rótulo de advertencia. var(--text-primary) y no #000 fijo,
+     * porque en modo oscuro ese color es blanco (ver :root[data-theme=
+     * "dark"]) -- un negro fijo quedaría invisible ahí. Selector con más
+     * especificidad que ".advertencia-cobertura .texto strong" para que
+     * gane sobre esa regla. */
+    .advertencia-cobertura .texto strong.enfasis-hipotesis {
+      color: var(--text-primary);
+      font-weight: 700;
     }
 
     .loading {
@@ -1067,7 +1081,24 @@ function renderAdvertenciaCobertura(data) {
   const etiqueta = document.createElement("strong");
   etiqueta.textContent = "Advertencia de cobertura. ";
   texto.appendChild(etiqueta);
-  texto.appendChild(document.createTextNode(data.advertencia_cobertura));
+
+  // Resalta en negrita y color neutro (no el ámbar de la etiqueta de
+  // arriba) la frase clave de la advertencia -- el texto en sí viene
+  // fijo del backend (_construir_advertencia_cobertura), acá solo se le
+  // da énfasis visual a este fragmento puntual.
+  const FRASE_CLAVE = "los hallazgos de este reporte deben tratarse solo como hipótesis por contrastar";
+  const textoCompleto = data.advertencia_cobertura;
+  const idx = textoCompleto.indexOf(FRASE_CLAVE);
+  if (idx === -1) {
+    texto.appendChild(document.createTextNode(textoCompleto));
+  } else {
+    texto.appendChild(document.createTextNode(textoCompleto.slice(0, idx)));
+    const destacado = document.createElement("strong");
+    destacado.className = "enfasis-hipotesis";
+    destacado.textContent = textoCompleto.slice(idx, idx + FRASE_CLAVE.length);
+    texto.appendChild(destacado);
+    texto.appendChild(document.createTextNode(textoCompleto.slice(idx + FRASE_CLAVE.length)));
+  }
 
   div.append(icono, texto);
   return div;
