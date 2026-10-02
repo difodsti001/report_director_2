@@ -174,14 +174,20 @@ async def _asegurar_schema_cache() -> None:
 # =============================================================================
 # Configuración de negocio
 # =============================================================================
-COLUMNAS_FILTRO_IE = ("nombre_ie", '"región"', "distrito")
+COLUMNAS_FILTRO_IE = ("nombre_ie", "ugel", '"región"', "distrito")
 _SEPARADOR_CLAVE_IE = "|"
 
 
-def _armar_clave_ie(nombre_ie: str, region: str, distrito: str) -> str:
+def _armar_clave_ie(nombre_ie: str, ugel: str, region: str, distrito: str) -> str:
     """Arma la clave compuesta que identifica una IE en el caché, a
-    partir de los 3 valores ya resueltos desde la consulta SQL."""
-    return _SEPARADOR_CLAVE_IE.join([nombre_ie or "", region or "", distrito or ""])
+    partir de los 4 valores ya resueltos desde la consulta SQL.
+
+    ugel es necesario para desambiguar: existen pares reales de IEs con
+    el mismo nombre_ie + región y distrito en NULL en ambos casos, pero
+    ugel distinto (ej. dos "CESAR VALLEJO" en Apurímac, una en UGEL
+    Chincheros y otra en UGEL Cotabambas) -- sin ugel, el sistema las
+    trataría como una sola institución y mezclaría su evidencia."""
+    return _SEPARADOR_CLAVE_IE.join([nombre_ie or "", ugel or "", region or "", distrito or ""])
 
 
 # =============================================================================
@@ -418,17 +424,17 @@ def _cmids_docentes_configurados() -> list[int]:
 
 async def resolver_cod_modular(userid: int) -> dict:
     """
-    Busca la IE del directivo por userid, trayendo las 3 columnas del
-    filtro compuesto (nombre_ie, región, distrito). Retorna
-    {"cod_modular": <clave compuesta>, "nombre_ie": ..., "region": ...,
-    "distrito": ...} -- el campo "cod_modular" en el diccionario de
-    retorno se mantiene por compatibilidad con el resto del pipeline
-    (caché, logs, registrar_consulta), aunque ya no es la columna
-    cod_modular de la base sino la clave compuesta armada con
+    Busca la IE del directivo por userid, trayendo las 4 columnas del
+    filtro compuesto (nombre_ie, ugel, región, distrito). Retorna
+    {"cod_modular": <clave compuesta>, "nombre_ie": ..., "ugel": ...,
+    "region": ..., "distrito": ...} -- el campo "cod_modular" en el
+    diccionario de retorno se mantiene por compatibilidad con el resto
+    del pipeline (caché, logs, registrar_consulta), aunque ya no es la
+    columna cod_modular de la base sino la clave compuesta armada con
     _armar_clave_ie.
     """
     query = """
-        SELECT nombre_ie, "región" AS region, distrito
+        SELECT nombre_ie, ugel, "región" AS region, distrito
         FROM public."base_ebr_IA"
         WHERE userid = %(userid)s
         LIMIT 1
@@ -440,35 +446,38 @@ async def resolver_cod_modular(userid: int) -> dict:
         log.warning("directivo_no_encontrado", userid=userid)
         raise DirectivoNoEncontradoError(f"userid {userid} no tiene IE asociada")
 
-    clave_ie = _armar_clave_ie(row["nombre_ie"], row["region"], row["distrito"])
+    clave_ie = _armar_clave_ie(row["nombre_ie"], row["ugel"], row["region"], row["distrito"])
 
     log.info(
         "cod_modular_resuelto",
         userid=userid,
         cod_modular=clave_ie,
         nombre_ie=row["nombre_ie"],
+        ugel=row["ugel"],
         region=row["region"],
         distrito=row["distrito"],
     )
     return {
         "cod_modular": clave_ie,
         "nombre_ie": row["nombre_ie"],
+        "ugel": row["ugel"],
         "region": row["region"],
         "distrito": row["distrito"],
     }
 
 
-async def contar_docentes_total(nombre_ie: str, region: str, distrito: str, nivel_educativo: Optional[str] = None) -> int:
+async def contar_docentes_total(nombre_ie: str, ugel: str, region: str, distrito: str, nivel_educativo: Optional[str] = None) -> int:
     """Cuenta docentes+jerárquicos en base_ebr_IA para esta IE, filtrando
-    por las 3 columnas del filtro compuesto (nombre_ie, región, distrito)
-    por separado -- no concatenadas -- para que Postgres pueda usar
-    índices existentes sobre esas columnas. Si se pasa nivel_educativo,
-    filtra además por ese nivel (Secundaria/Primaria/Inicial); si es
-    None, cuenta los 3 niveles juntos."""
+    por las 4 columnas del filtro compuesto (nombre_ie, ugel, región,
+    distrito) por separado -- no concatenadas -- para que Postgres pueda
+    usar índices existentes sobre esas columnas. Si se pasa
+    nivel_educativo, filtra además por ese nivel (Secundaria/Primaria/
+    Inicial); si es None, cuenta los 3 niveles juntos."""
     query = """
         SELECT COUNT(*) AS total
         FROM public."base_ebr_IA"
         WHERE nombre_ie = %(nombre_ie)s
+          AND ugel IS NOT DISTINCT FROM %(ugel)s
           AND "región" = %(region)s
           AND distrito IS NOT DISTINCT FROM %(distrito)s
           AND UPPER(cargo) = ANY(%(cargos)s)
@@ -479,6 +488,7 @@ async def contar_docentes_total(nombre_ie: str, region: str, distrito: str, nive
             query,
             {
                 "nombre_ie": nombre_ie,
+                "ugel": ugel,
                 "region": region,
                 "distrito": distrito,
                 "cargos": list(CARGOS_DOCENTE),
@@ -489,12 +499,12 @@ async def contar_docentes_total(nombre_ie: str, region: str, distrito: str, nive
     return row["total"] if row else 0
 
 
-async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str, nivel_educativo: Optional[str] = None) -> list[dict]:
+async def obtener_filas_vista(nombre_ie: str, ugel: str, region: str, distrito: str, nivel_educativo: Optional[str] = None) -> list[dict]:
     """Trae todas las filas de la vista, sin filtrar por status -- incluye
     'success' (válida), 'validation_failed' (no válida) y 'failed' (sin
     evidencia real, se trata como sin entrega). El llamador filtra según lo
     que necesite (ver filas_validas / clasificar_evidencias_por_estado).
-    Filtro compuesto por las 3 columnas, igual que en base_ebr_IA. Si se
+    Filtro compuesto por las 4 columnas, igual que en base_ebr_IA. Si se
     pasa nivel_educativo, filtra además por ese nivel; si es None, trae
     los 3 niveles juntos."""
     cmids_validos = _cmids_docentes_configurados()
@@ -510,6 +520,7 @@ async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str, nivel_
                nivel_educativo, retroalimentacion
         FROM public.vw_processing_brechas_ebr
         WHERE nombre_ie = %(nombre_ie)s
+          AND ugel IS NOT DISTINCT FROM %(ugel)s
           AND "región" = %(region)s
           AND distrito IS NOT DISTINCT FROM %(distrito)s
           AND cmid = ANY(%(cmids_validos)s)
@@ -521,6 +532,7 @@ async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str, nivel_
             query,
             {
                 "nombre_ie": nombre_ie,
+                "ugel": ugel,
                 "region": region,
                 "distrito": distrito,
                 "cmids_validos": cmids_validos,
@@ -532,7 +544,7 @@ async def obtener_filas_vista(nombre_ie: str, region: str, distrito: str, nivel_
 
     log.info(
         "filas_vista_obtenidas",
-        nombre_ie=nombre_ie, region=region, distrito=distrito,
+        nombre_ie=nombre_ie, ugel=ugel, region=region, distrito=distrito,
         nivel_educativo=nivel_educativo, n_filas=len(rows),
     )
     return rows
@@ -552,7 +564,7 @@ def _normalizar_nivel_obtenido(rows: list[dict]) -> None:
         row["nivel_obtenido"] = _ALIAS_NIVEL_OBTENIDO.get(row["nivel_obtenido"], row["nivel_obtenido"])
 
 
-async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str, nivel_educativo: Optional[str] = None) -> int:
+async def contar_docentes_evaluados(nombre_ie: str, ugel: str, region: str, distrito: str, nivel_educativo: Optional[str] = None) -> int:
     """
     Cuenta cuántos docentes DISTINTOS tienen evidencia 'success' completa
     (todas sus filas con criterion_index no nulo) para esta IE, sin traer
@@ -578,6 +590,7 @@ async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str, 
             SELECT user_id, criterion_index, nivel_obtenido, nivel_educativo
             FROM public.vw_processing_brechas_ebr
             WHERE nombre_ie = %(nombre_ie)s
+              AND ugel IS NOT DISTINCT FROM %(ugel)s
               AND "región" = %(region)s
               AND distrito IS NOT DISTINCT FROM %(distrito)s
               AND cmid = ANY(%(cmids_validos)s)
@@ -596,6 +609,7 @@ async def contar_docentes_evaluados(nombre_ie: str, region: str, distrito: str, 
             query,
             {
                 "nombre_ie": nombre_ie,
+                "ugel": ugel,
                 "region": region,
                 "distrito": distrito,
                 "cmids_validos": cmids_validos,
@@ -1526,25 +1540,25 @@ def _construir_advertencia_cobertura(
 # Orquestador de generación
 # =============================================================================
 
-async def generar_reporte(cod_modular: str, nombre_ie: str, region: str, distrito: str) -> dict:
+async def generar_reporte(cod_modular: str, nombre_ie: str, ugel: str, region: str, distrito: str) -> dict:
     """
     Genera el Reporte Institucional 1 (F4): un único análisis
     institucional para la IE completa (no uno por nivel educativo como
     antes), con la lectura diferenciada por nivel como una sección más
     (ficha técnica, punto 10, sección 7).
 
-    cod_modular es la CLAVE COMPUESTA (nombre_ie|región|distrito), usada
-    como institución y para logs/caché. nombre_ie, region, distrito por
-    separado son los que se usan en las queries reales contra
-    base_ebr_IA y vw_processing_brechas_ebr.
+    cod_modular es la CLAVE COMPUESTA (nombre_ie|ugel|región|distrito),
+    usada como institución y para logs/caché. nombre_ie, ugel, region,
+    distrito por separado son los que se usan en las queries reales
+    contra base_ebr_IA y vw_processing_brechas_ebr.
     """
-    todas_las_filas = await obtener_filas_vista(nombre_ie, region, distrito)
+    todas_las_filas = await obtener_filas_vista(nombre_ie, ugel, region, distrito)
     if not todas_las_filas:
         raise SinDatosDisponiblesError(f"Sin datos en la vista para {cod_modular}")
 
     todas_las_filas = _excluir_docentes_con_registro_incompleto(todas_las_filas)
 
-    n_docentes_total = await contar_docentes_total(nombre_ie, region, distrito)
+    n_docentes_total = await contar_docentes_total(nombre_ie, ugel, region, distrito)
     estados = clasificar_evidencias_por_estado(todas_las_filas, n_docentes_total)
     n_evidencias_validas = estados["n_validas"]
 
@@ -1808,8 +1822,8 @@ async def consultar_reporte_existente(userid: int) -> dict:
 
     guardado = await obtener_reporte_guardado(cod_modular)
 
-    n_actual = await contar_docentes_evaluados(ie["nombre_ie"], ie["region"], ie["distrito"])
-    n_total = await contar_docentes_total(ie["nombre_ie"], ie["region"], ie["distrito"])
+    n_actual = await contar_docentes_evaluados(ie["nombre_ie"], ie["ugel"], ie["region"], ie["distrito"])
+    n_total = await contar_docentes_total(ie["nombre_ie"], ie["ugel"], ie["region"], ie["distrito"])
     pct_cobertura_actual = round(100 * n_actual / n_total) if n_total > 0 else 0
     clasificacion = _clasificar_cobertura(n_actual, n_total)
 
@@ -1882,6 +1896,7 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
     ie = await resolver_cod_modular(userid)
     cod_modular = ie["cod_modular"]
     nombre_ie = ie["nombre_ie"]
+    ugel = ie["ugel"]
     region = ie["region"]
     distrito = ie["distrito"]
 
@@ -1902,7 +1917,7 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
         # invalidando el caché y regenerando con el LLM en cada llamada
         # mientras un docente quedara con la carga a medias, aunque nada
         # hubiera cambiado realmente.
-        n_actual = await contar_docentes_evaluados(nombre_ie, region, distrito)
+        n_actual = await contar_docentes_evaluados(nombre_ie, ugel, region, distrito)
         debe_generar = n_actual != guardado["n_docentes_evaluados"]
         if debe_generar:
             log.info(
@@ -1919,7 +1934,7 @@ async def obtener_o_generar_reporte(userid: int, courseid: int, cmid: int) -> di
     else:
         log.info("cache_miss_o_reintento", cod_modular=cod_modular)
         try:
-            reporte = await generar_reporte(cod_modular, nombre_ie, region, distrito)
+            reporte = await generar_reporte(cod_modular, nombre_ie, ugel, region, distrito)
         except SinDatosDisponiblesError:
             if guardado is not None and guardado["estado"] == "generado":
                 # Vacío transitorio (ej. reprocesamiento del pipeline de

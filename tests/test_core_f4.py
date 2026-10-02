@@ -337,6 +337,23 @@ def test_denominacion_visible_sin_codigo():
 
 
 # =============================================================================
+# _armar_clave_ie -- ugel es necesario para desambiguar IEs reales con el
+# mismo nombre_ie + región (y distrito en NULL en ambos casos) pero ugel
+# distinto, ej. dos "CESAR VALLEJO" en Apurímac (verificado contra datos
+# reales de base_ebr_IA).
+# =============================================================================
+
+def test_armar_clave_ie_desambigua_por_ugel():
+    clave_chincheros = core._armar_clave_ie("CESAR VALLEJO", "UGEL CHINCHEROS", "APURIMAC", None)
+    clave_cotabambas = core._armar_clave_ie("CESAR VALLEJO", "UGEL COTABAMBAS", "APURIMAC", None)
+    assert clave_chincheros != clave_cotabambas
+
+
+def test_armar_clave_ie_tolera_ugel_y_distrito_none():
+    assert core._armar_clave_ie("IE X", None, "LIMA", None) == "IE X||LIMA|"
+
+
+# =============================================================================
 # _clasificar_cobertura -- bandas de la Adenda F4-ADENDA-EMISION-RI-EBRJEC26
 # v1.0, sección 4. Casos tomados directo de los CP13-CP18 de la propia
 # adenda (sección 14, casos de prueba de aceptación).
