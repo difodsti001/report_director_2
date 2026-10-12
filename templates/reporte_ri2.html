@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reporte Institucional 2 (RI2)</title>
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --bg-card: #ffffff;
+    --texto: #1f2937;
+    --texto-suave: #6b7280;
+    --borde: #e2e5ea;
+    --primario: #1d4e89;
+    --primario-suave: #e8f0f9;
+    --verde: #1e7e34;
+    --verde-suave: #e6f4ea;
+    --amber: #92620a;
+    --amber-suave: #fdf3e0;
+    --rojo: #a3261f;
+    --rojo-suave: #fbeceb;
+    --sombra: 0 1px 3px rgba(0, 0, 0, 0.08);
+  }
+  [data-theme="dark"] {
+    --bg: #15181c;
+    --bg-card: #1f242b;
+    --texto: #e6e9ed;
+    --texto-suave: #9aa3ad;
+    --borde: #2c333c;
+    --primario: #5b9bd5;
+    --primario-suave: #1d2a38;
+    --verde: #4caf6e;
+    --verde-suave: #16251c;
+    --amber: #e0a63e;
+    --amber-suave: #2c2410;
+    --rojo: #e5736b;
+    --rojo-suave: #2c1917;
+    --sombra: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--texto);
+    line-height: 1.5;
+  }
+  .contenedor { max-width: 920px; margin: 0 auto; padding: 24px 16px 64px; }
+  header.top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--borde);
+    border-radius: 12px;
+    box-shadow: var(--sombra);
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  header.top h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  header.top .meta { color: var(--texto-suave); font-size: 0.85rem; }
+  #btnTema {
+    border: 1px solid var(--borde);
+    background: var(--bg-card);
+    color: var(--texto);
+    border-radius: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .tile {
+    background: var(--bg-card);
+    border: 1px solid var(--borde);
+    border-radius: 10px;
+    padding: 12px 14px;
+    box-shadow: var(--sombra);
+  }
+  .tile .valor { font-size: 1.4rem; font-weight: 700; }
+  .tile .etiqueta { color: var(--texto-suave); font-size: 0.78rem; margin-top: 2px; }
+  .advertencia-cobertura {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    background: var(--amber-suave);
+    border: 1px solid var(--amber);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 20px;
+  }
+  .advertencia-cobertura .icono { font-size: 1.1rem; line-height: 1.5; color: var(--amber); }
+  .advertencia-cobertura p { margin: 0; color: var(--texto); }
+  .advertencia-cobertura strong { color: var(--texto); font-weight: 700; }
+  section.tarjeta {
+    background: var(--bg-card);
+    border: 1px solid var(--borde);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+    box-shadow: var(--sombra);
+  }
+  section.tarjeta h2 {
+    font-size: 1.02rem;
+    margin: 0 0 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  section.tarjeta h2 .num {
+    color: var(--primario);
+    font-weight: 700;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--borde); }
+  th { color: var(--texto-suave); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; }
+  tr:last-child td { border-bottom: none; }
+  .pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .pill.verde { background: var(--verde-suave); color: var(--verde); }
+  .pill.amber { background: var(--amber-suave); color: var(--amber); }
+  .pill.rojo { background: var(--rojo-suave); color: var(--rojo); }
+  .item-aspecto { padding: 10px 0; border-bottom: 1px solid var(--borde); }
+  .item-aspecto:last-child { border-bottom: none; }
+  .item-aspecto .titulo { font-weight: 700; margin-bottom: 3px; }
+  .item-aspecto .cuerpo { color: var(--texto); font-size: 0.92rem; }
+  ul.lista-simple { margin: 0; padding-left: 20px; }
+  ul.lista-simple li { margin-bottom: 6px; }
+  .enfasis-item { margin-bottom: 12px; }
+  .enfasis-item .nombre { font-weight: 700; }
+  .enfasis-item .relacion { color: var(--texto-suave); font-size: 0.78rem; margin-left: 6px; }
+  .contraste-item { margin-bottom: 12px; }
+  .contraste-item .hallazgo { font-weight: 600; }
+  .contraste-item .fuente { color: var(--texto-suave); font-size: 0.82rem; }
+  .contraste-item .pregunta { font-style: italic; margin-top: 2px; }
+  .sintesis-texto { font-size: 0.95rem; }
+  .estado-pantalla {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--texto-suave);
+  }
+  .estado-pantalla.error { color: var(--rojo); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="contenedor">
+  <div id="pantallaEstado" class="estado-pantalla">Cargando reporte...</div>
+  <div id="pantallaReporte" hidden></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const params = new URLSearchParams(location.search);
+  const userid = params.get("userid");
+  const courseid = params.get("courseid");
+  const cmid = params.get("cmid");
+
+  const pantallaEstado = document.getElementById("pantallaEstado");
+  const pantallaReporte = document.getElementById("pantallaReporte");
+
+  function mostrarEstado(mensaje, esError) {
+    pantallaReporte.hidden = true;
+    pantallaEstado.hidden = false;
+    pantallaEstado.textContent = mensaje;
+    pantallaEstado.className = "estado-pantalla" + (esError ? " error" : "");
+  }
+
+  function aplicarTema(tema) {
+    if (tema === "dark" || tema === "light") {
+      document.documentElement.setAttribute("data-theme", tema);
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+    }
+  }
+
+  (function initTema() {
+    let guardado = null;
+    try { guardado = localStorage.getItem("ri2_tema"); } catch (e) { /* sin storage disponible */ }
+    aplicarTema(guardado);
+  })();
+
+  function el(tag, attrs, hijos) {
+    const nodo = document.createElement(tag);
+    if (attrs) {
+      for (const k in attrs) {
+        if (k === "class") nodo.className = attrs[k];
+        else if (k === "html") continue;
+        else nodo.setAttribute(k, attrs[k]);
+      }
+    }
+    (hijos || []).forEach((h) => {
+      if (h === null || h === undefined) return;
+      nodo.appendChild(typeof h === "string" ? document.createTextNode(h) : h);
+    });
+    return nodo;
+  }
+
+  function pillClase(pct, umbralBueno, umbralMalo) {
+    if (pct >= umbralBueno) return "verde";
+    if (pct <= umbralMalo) return "rojo";
+    return "amber";
+  }
+
+  function fechaLegible(iso) {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString("es-PE", { year: "numeric", month: "long", day: "numeric" });
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  function lecturaGeneral(c) {
+    if (c.pct_logrado_destacado >= 70) return "Resultado predominantemente favorable";
+    if (c.pct_logrado_destacado >= 40) return "Resultado mixto, con avances por consolidar";
+    if (c.pct_inicio_en_desarrollo >= 70) return "Resultado que requiere fortalecimiento prioritario";
+    return "Resultado que todavía requiere fortalecimiento";
+  }
+
+  function renderHeader(reporte) {
+    const header = el("header", { class: "top" }, [
+      el("div", null, [
+        el("h1", null, [reporte.nombre_ie || "Institución Educativa"]),
+        el("div", { class: "meta" }, [
+          "Reporte Institucional 2 · Generado el " + fechaLegible(reporte.fecha_generacion),
+        ]),
+      ]),
+      el("button", { id: "btnTema", type: "button" }, ["Cambiar tema"]),
+    ]);
+    pantallaReporte.appendChild(header);
+    header.querySelector("#btnTema").addEventListener("click", () => {
+      const actual = document.documentElement.getAttribute("data-theme");
+      const siguiente = actual === "dark" ? "light" : actual === "light" ? null : "dark";
+      aplicarTema(siguiente);
+      try {
+        if (siguiente) localStorage.setItem("ri2_tema", siguiente);
+        else localStorage.removeItem("ri2_tema");
+      } catch (e) { /* sin storage disponible */ }
+    });
+
+    const tiles = el("div", { class: "tiles" }, [
+      tile(String(reporte.n_docentes_total), "Docentes en la IE"),
+      tile(String(reporte.n_comparaciones_validas), "Comparaciones V1→V2 válidas"),
+      tile(reporte.pct_cobertura_v2 + "%", "Cobertura de comparación"),
+      tile(String(reporte.n_sin_referencia_v1), "Sin Sesión V1 de referencia"),
+      tile(String(reporte.n_no_validas), "V2 no disponible o no válida"),
+    ]);
+    pantallaReporte.appendChild(tiles);
+
+    if (reporte.advertencia_cobertura) {
+      pantallaReporte.appendChild(
+        el("div", { class: "advertencia-cobertura" }, [
+          el("span", { class: "icono" }, ["⚠️"]),
+          el("p", null, [reporte.advertencia_cobertura]),
+        ])
+      );
+    }
+  }
+
+  function tile(valor, etiqueta) {
+    return el("div", { class: "tile" }, [
+      el("div", { class: "valor" }, [valor]),
+      el("div", { class: "etiqueta" }, [etiqueta]),
+    ]);
+  }
+
+  function tarjeta(numero, titulo, contenidoNodos) {
+    const sec = el("section", { class: "tarjeta" }, [
+      el("h2", null, [el("span", { class: "num" }, [numero + "."]), titulo]),
+    ]);
+    contenidoNodos.forEach((n) => sec.appendChild(n));
+    return sec;
+  }
+
+  // --- Secciones ---------------------------------------------------------
+
+  function seccionPanorama(reporte) {
+    const hallazgos = [];
+    hallazgos.push(
+      "Cobertura: " + reporte.n_comparaciones_validas + " de " + reporte.n_docentes_total +
+      " docentes (" + reporte.pct_cobertura_v2 + "%) cuentan con una comparación válida entre la Sesión V1 y la Sesión V2."
+    );
+
+    const distribucion = reporte.distribucion_v2_por_aspecto || [];
+    if (distribucion.length) {
+      const mejorLogrado = distribucion.slice().sort((a, b) => b.pct_logrado_destacado - a.pct_logrado_destacado)[0];
+      const peorLogrado = distribucion.slice().sort((a, b) => b.pct_inicio_en_desarrollo - a.pct_inicio_en_desarrollo)[0];
+      hallazgos.push(
+        mejorLogrado.nombre + " es el aspecto con mayor desempeño favorable en la Sesión V2 (" +
+        mejorLogrado.pct_logrado_destacado + "% en Logrado o Destacado)."
+      );
+      hallazgos.push(
+        peorLogrado.nombre + " es el aspecto que más requiere fortalecimiento (" +
+        peorLogrado.pct_inicio_en_desarrollo + "% en Inicio o En desarrollo)."
+      );
+    }
+
+    const dificultades = reporte.dificultades_persisten || [];
+    if (dificultades.length) {
+      hallazgos.push(dificultades[0].nombre + " es la dificultad que persiste con mayor frecuencia (" + dificultades[0].pct + "% de los docentes).");
+    }
+
+    const naturaleza = reporte.naturaleza_cambios || [];
+    if (naturaleza.length) {
+      hallazgos.push(naturaleza[0].nombre + " es el tipo de cambio más frecuente entre la Sesión V1 y la Sesión V2 (" + naturaleza[0].pct + "% de los docentes).");
+    }
+
+    const lista = el("ul", { class: "lista-simple" }, hallazgos.map((h) => el("li", null, [h])));
+    return tarjeta(1, "Panorama general", [lista]);
+  }
+
+  function seccionResultadoGeneral(reporte) {
+    const filas = reporte.distribucion_v2_por_aspecto || [];
+    if (!filas.length) return null;
+    const tabla = el("table", null, [
+      el("thead", null, [
+        el("tr", null, [
+          el("th", null, ["Aspecto"]),
+          el("th", null, ["Inicio + En desarrollo"]),
+          el("th", null, ["Logrado + Destacado"]),
+          el("th", null, ["Lectura general"]),
+        ]),
+      ]),
+      el("tbody", null, filas.map((c) =>
+        el("tr", null, [
+          el("td", null, [c.nombre]),
+          el("td", null, [el("span", { class: "pill " + pillClase(100 - c.pct_inicio_en_desarrollo, 70, 30) }, [c.pct_inicio_en_desarrollo + "%"])]),
+          el("td", null, [el("span", { class: "pill " + pillClase(c.pct_logrado_destacado, 70, 30) }, [c.pct_logrado_destacado + "%"])]),
+          el("td", null, [lecturaGeneral(c)]),
+        ])
+      )),
+    ]);
+    return tarjeta(2, "Resultado general en la Sesión V2", [tabla]);
+  }
+
+  function seccionInterpretacion(reporte) {
+    const filas = reporte.distribucion_v2_por_aspecto || [];
+    const interpretaciones = reporte.interpretaciones_por_aspecto || {};
+    if (!filas.length) return null;
+    const nodos = filas.map((c) =>
+      el("div", { class: "item-aspecto" }, [
+        el("div", { class: "titulo" }, [c.nombre]),
+        el("div", { class: "cuerpo" }, [interpretaciones[c.criterio_id] || ""]),
+      ])
+    );
+    return tarjeta(3, "Interpretación por aspecto", nodos);
+  }
+
+  function seccionAvance(reporte) {
+    const filas = reporte.avance_institucional || [];
+    if (!filas.length) return null;
+    const comentarios = reporte.avance_comentarios || {};
+    const tabla = el("table", null, [
+      el("thead", null, [
+        el("tr", null, [
+          el("th", null, ["Aspecto"]),
+          el("th", null, ["% favorable en V1"]),
+          el("th", null, ["% favorable en V2"]),
+          el("th", null, ["Avance (p.p.)"]),
+        ]),
+      ]),
+      el("tbody", null, filas.map((c) =>
+        el("tr", null, [
+          el("td", null, [c.nombre]),
+          el("td", null, [c.pct_favorable_v1 + "%"]),
+          el("td", null, [c.pct_favorable_v2 + "%"]),
+          el("td", null, [el("span", { class: "pill " + (c.avance_pct > 0 ? "verde" : c.avance_pct < 0 ? "rojo" : "amber") }, [(c.avance_pct > 0 ? "+" : "") + c.avance_pct])]),
+        ])
+      )),
+    ]);
+    const comentariosNodos = filas.map((c) =>
+      el("div", { class: "item-aspecto" }, [
+        el("div", { class: "titulo" }, [c.nombre]),
+        el("div", { class: "cuerpo" }, [comentarios[c.criterio_id] || ""]),
+      ])
+    );
+    return tarjeta(4, "Avance institucional respecto de la línea de base", [tabla, ...comentariosNodos]);
+  }
+
+  function seccionEnfasis(reporte) {
+    const items = reporte.enfasis_lectura || [];
+    if (!items.length) return null;
+    const nodos = items.map((it) =>
+      el("div", { class: "enfasis-item" }, [
+        el("span", { class: "nombre" }, [it.enfasis]),
+        it.aspecto_relacionado ? el("span", { class: "relacion" }, ["(" + it.aspecto_relacionado + ")"]) : null,
+        el("div", null, [it.texto_permitido]),
+      ])
+    );
+    return tarjeta(5, "Énfasis del programa", nodos);
+  }
+
+  function seccionDificultades(reporte) {
+    const items = reporte.dificultades_persisten || [];
+    if (!items.length) return null;
+    const nodos = items.map((b) =>
+      el("div", { class: "item-aspecto" }, [
+        el("div", { class: "titulo" }, [b.nombre + " — " + b.pct + "% de los docentes"]),
+        el("div", { class: "cuerpo" }, [b.manifestacion || ""]),
+      ])
+    );
+    return tarjeta(6, "Dificultades que persisten", nodos);
+  }
+
+  function seccionNaturalezaCambios(reporte) {
+    const items = reporte.naturaleza_cambios || [];
+    if (!items.length) return null;
+    const nodos = items.map((b) =>
+      el("div", { class: "item-aspecto" }, [
+        el("div", { class: "titulo" }, [b.nombre + " — " + b.pct + "% de los docentes"]),
+        el("div", { class: "cuerpo" }, [b.manifestacion || ""]),
+      ])
+    );
+    return tarjeta(7, "Naturaleza de los cambios observados", nodos);
+  }
+
+  function seccionLogros(reporte) {
+    const items = reporte.logros_consolidados || [];
+    if (!items.length) return null;
+    const nodos = items.map((l) =>
+      el("div", { class: "item-aspecto" }, [
+        el("div", { class: "titulo" }, [
+          l.nombre + " — " + l.pct_mejora_real + "% con mejora real" +
+          (l.practica_efectiva_transferible ? " · práctica efectiva transferible" : ""),
+        ]),
+        el("div", { class: "cuerpo" }, [l.manifestacion || ""]),
+      ])
+    );
+    return tarjeta(8, "Logros consolidados", nodos);
+  }
+
+  function seccionLecturaPorNivel(reporte) {
+    const niveles = reporte.lectura_por_nivel || [];
+    if (!niveles.length) return null;
+    const nodos = niveles.map((nv) => {
+      const filas = nv.distribucion_por_aspecto || [];
+      const tabla = filas.length ? el("table", null, [
+        el("thead", null, [
+          el("tr", null, [el("th", null, ["Aspecto"]), el("th", null, ["Logrado + Destacado"])]),
+        ]),
+        el("tbody", null, filas.map((c) =>
+          el("tr", null, [
+            el("td", null, [c.nombre]),
+            el("td", null, [c.pct_logrado_destacado + "%"]),
+          ])
+        )),
+      ]) : el("p", null, ["Sin datos suficientes para este nivel."]);
+      return el("div", { class: "item-aspecto" }, [
+        el("div", { class: "titulo" }, [
+          nv.nivel_educativo + " (n=" + nv.n + (nv.muestra_insuficiente ? ", muestra insuficiente" : "") + ")",
+        ]),
+        tabla,
+      ]);
+    });
+    return tarjeta(9, "Lectura por nivel educativo", nodos);
+  }
+
+  function seccionContraste(reporte) {
+    const items = reporte.aspectos_contraste || [];
+    if (!items.length) return null;
+    const nodos = items.map((c) =>
+      el("div", { class: "contraste-item" }, [
+        el("div", { class: "hallazgo" }, [c.hallazgo]),
+        el("div", { class: "fuente" }, ["Fuente sugerida: " + c.fuente_sugerida]),
+        el("div", { class: "pregunta" }, [c.pregunta]),
+      ])
+    );
+    return tarjeta(10, "Lo que conviene contrastar con otras evidencias", nodos);
+  }
+
+  function seccionPreguntasRtc(reporte) {
+    const preguntas = reporte.preguntas_rtc || [];
+    if (!preguntas.length) return null;
+    const lista = el("ul", { class: "lista-simple" }, preguntas.map((p) => el("li", null, [p])));
+    return tarjeta(11, "Preguntas movilizadoras para la RTC 2", [lista]);
+  }
+
+  function seccionSintesis(reporte) {
+    if (!reporte.sintesis_institucional) return null;
+    return tarjeta(12, "Síntesis institucional", [el("p", { class: "sintesis-texto" }, [reporte.sintesis_institucional])]);
+  }
+
+  function seccionCobertura(reporte) {
+    const detalle = el("table", null, [
+      el("tbody", null, [
+        filaDetalle("Docentes en la IE", String(reporte.n_docentes_total)),
+        filaDetalle("Comparaciones V1→V2 válidas", String(reporte.n_comparaciones_validas)),
+        filaDetalle("Sin Sesión V1 de referencia", String(reporte.n_sin_referencia_v1)),
+        filaDetalle("Sesión V2 no disponible o no válida", String(reporte.n_no_validas)),
+        filaDetalle("Cobertura de comparación", reporte.pct_cobertura_v2 + "%"),
+        filaDetalle("Banda aplicada", String(reporte.banda_aplicada)),
+        filaDetalle("Umbral requerido", String(reporte.umbral_requerido)),
+        filaDetalle("Estado de cobertura", String(reporte.estado_cobertura)),
+      ]),
+    ]);
+    return tarjeta(13, "Cobertura de la comparación", [detalle]);
+  }
+
+  function filaDetalle(etiqueta, valor) {
+    return el("tr", null, [el("td", null, [etiqueta]), el("td", null, [valor])]);
+  }
+
+  function renderReporte(reporte) {
+    pantallaReporte.innerHTML = "";
+    renderHeader(reporte);
+
+    const secciones = [
+      seccionPanorama,
+      seccionResultadoGeneral,
+      seccionInterpretacion,
+      seccionAvance,
+      seccionEnfasis,
+      seccionDificultades,
+      seccionNaturalezaCambios,
+      seccionLogros,
+      seccionLecturaPorNivel,
+      seccionContraste,
+      seccionPreguntasRtc,
+      seccionSintesis,
+      seccionCobertura,
+    ];
+
+    let numero = 1;
+    secciones.forEach((fn) => {
+      const nodo = fn(reporte);
+      if (!nodo) return;
+      nodo.querySelector("h2 .num").textContent = numero + ".";
+      numero += 1;
+      pantallaReporte.appendChild(nodo);
+    });
+
+    pantallaEstado.hidden = true;
+    pantallaReporte.hidden = false;
+  }
+
+  async function cargar() {
+    if (!userid) {
+      mostrarEstado("Falta el parámetro userid en la URL.", true);
+      return;
+    }
+
+    let consulta;
+    try {
+      consulta = await fetch("/reporte/consultar?userid=" + encodeURIComponent(userid)).then((r) => {
+        if (!r.ok) throw new Error("No se pudo consultar el reporte (" + r.status + ")");
+        return r.json();
+      });
+    } catch (e) {
+      mostrarEstado("No se pudo consultar el reporte. Intenta de nuevo más tarde.", true);
+      return;
+    }
+
+    if (consulta.accion === "esperar_docentes") {
+      mostrarEstado(
+        "Todavía no hay suficientes docentes con la Sesión V2 evaluada para generar este reporte " +
+        "(" + consulta.n_docentes_evaluados + " de " + consulta.n_docentes_total + " docentes)."
+      );
+      return;
+    }
+
+    if (consulta.accion === "mostrar" && consulta.reporte) {
+      renderReporte(consulta.reporte);
+      return;
+    }
+
+    if (!courseid || !cmid) {
+      mostrarEstado("Falta generar el reporte y no se recibieron los parámetros courseid/cmid necesarios.", true);
+      return;
+    }
+
+    mostrarEstado("Generando el reporte, esto puede tardar unos segundos...");
+    try {
+      const reporte = await fetch(
+        "/reporte/generar?courseid=" + encodeURIComponent(courseid) + "&cmid=" + encodeURIComponent(cmid),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userid: Number(userid) }),
+        }
+      ).then((r) => {
+        if (!r.ok) throw new Error("No se pudo generar el reporte (" + r.status + ")");
+        return r.json();
+      });
+      renderReporte(reporte);
+    } catch (e) {
+      mostrarEstado("No se pudo generar el reporte. Intenta de nuevo más tarde.", true);
+    }
+  }
+
+  cargar();
+})();
+</script>
+</body>
+</html>
