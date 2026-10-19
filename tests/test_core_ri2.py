@@ -13,6 +13,29 @@ from tests.test_core_f4 import _fila
 
 
 # =============================================================================
+# _quitar_oracion_numerica_inicial
+# =============================================================================
+
+def test_quitar_oracion_numerica_inicial_elimina_repeticion_del_llm():
+    texto = (
+        "En 3 de 5 sesiones (60%) se observa Logrado o Destacado. "
+        "Esto sugiere revisar las evidencias de implementacion."
+    )
+    assert core._quitar_oracion_numerica_inicial(texto) == (
+        "Esto sugiere revisar las evidencias de implementacion."
+    )
+
+
+def test_quitar_oracion_numerica_inicial_conserva_prosa_sin_cifras():
+    texto = "La evidencia disponible sugiere contrastar la implementacion."
+    assert core._quitar_oracion_numerica_inicial(texto) == texto
+
+
+def test_sin_punto_final_normaliza_fragmento_para_la_plantilla():
+    assert core._sin_punto_final("  resultados por contrastar.  ") == "resultados por contrastar"
+
+
+# =============================================================================
 # _clasificar_tipo_cambio
 # =============================================================================
 
@@ -49,10 +72,16 @@ def test_estado_evidencia_sin_referencia_v1():
     assert core._clasificar_estado_evidencia(filas_v1, filas_v2) == "sin_referencia_v1"
 
 
-def test_estado_evidencia_no_valida_sin_v2():
+def test_estado_evidencia_sin_entrega_v2_sin_filas():
     filas_v1 = [_fila(1, 1, "logrado")]
     filas_v2 = []
-    assert core._clasificar_estado_evidencia(filas_v1, filas_v2) == "no_valida"
+    assert core._clasificar_estado_evidencia(filas_v1, filas_v2) == "sin_entrega_v2"
+
+
+def test_estado_evidencia_sin_entrega_v2_status_failed():
+    filas_v1 = [_fila(1, 1, "logrado")]
+    filas_v2 = [_fila(1, 1, "logrado", status="failed")]
+    assert core._clasificar_estado_evidencia(filas_v1, filas_v2) == "sin_entrega_v2"
 
 
 def test_estado_evidencia_no_valida_v2_rechazada():
@@ -207,21 +236,26 @@ def test_logro_consolidado_no_transferible_sin_destacado():
 # _agregar_comparaciones_ie -- clasificación de la IE completa (sin DB)
 # =============================================================================
 
-def test_agregar_comparaciones_ie_clasifica_los_3_estados():
+def test_agregar_comparaciones_ie_clasifica_los_4_estados():
     # Docente 1: V1 y V2 completas (5 criterios, inicio -> logrado) -> valida.
     filas_v1 = [_fila(1, i, "inicio") for i in range(1, 6)]
     filas_v2 = [_fila(1, i, "logrado") for i in range(1, 6)]
 
-    # Docente 2: V1 válida, sin ninguna fila V2 -> no_valida.
+    # Docente 2: V1 válida, V2 rechazada (validation_failed) -> no_valida.
     filas_v1 += [_fila(2, 1, "logrado")]
+    filas_v2 += [_fila(2, 1, "logrado", status="validation_failed")]
 
     # Docente 3: sin V1, con V2 -> sin_referencia_v1.
     filas_v2 += [_fila(3, 1, "logrado")]
+
+    # Docente 4: V1 válida, sin ninguna fila V2 -> sin_entrega_v2.
+    filas_v1 += [_fila(4, 1, "logrado")]
 
     resultado = core._agregar_comparaciones_ie(filas_v1, filas_v2)
 
     assert resultado["n_sin_referencia_v1"] == 1
     assert resultado["n_no_validas"] == 1
+    assert resultado["n_sin_entrega_v2"] == 1
     assert len(resultado["comparaciones_validas"]) == 1
     assert len(resultado["comparaciones_validas"][0]) == 5
     assert all(c["tipo_cambio"] == "mejora_real" for c in resultado["comparaciones_validas"][0])

@@ -341,26 +341,26 @@ CMIDS_V1_POR_CURSO: dict[int, list[int] | None] = {
     2994: [208010],
 }
 
-# Pendiente de completar: solo 2918 está confirmado contra datos reales
-# (processingrun, verificado en sesión). El resto queda en None hasta
-# confirmarse -- mejor esperar a tener el cmid real que arriesgar una IE
-# con un cmid de V2 incorrecto y silenciosamente sin datos.
+# Pendiente de completar: 2918-2967 (15 de 24) están confirmados contra
+# datos reales. 2970-2994 quedan en None hasta confirmarse -- mejor
+# esperar a tener el cmid real que arriesgar una IE con un cmid de V2
+# incorrecto y silenciosamente sin datos.
 CMIDS_V2_POR_CURSO: dict[int, list[int] | None] = {
     2918: [206728],
-    2926: None,
-    2931: None,
-    2934: None,
-    2937: None,
-    2940: None,
-    2943: None,
-    2946: None,
-    2949: None,
-    2952: None,
-    2955: None,
-    2958: None,
-    2961: None,
-    2964: None,
-    2967: None,
+    2926: [216633],
+    2931: [216644],
+    2934: [216654],
+    2937: [216664],
+    2940: [216674],
+    2943: [216684],
+    2946: [216694],
+    2949: [216704],
+    2952: [216714],
+    2955: [216724],
+    2958: [216734],
+    2961: [216744],
+    2964: [216754],
+    2967: [216764],
     2970: None,
     2973: None,
     2976: None,
@@ -1143,20 +1143,32 @@ def _clasificar_tipo_cambio(nivel_v1: str, nivel_v2: str) -> str:
 def _clasificar_estado_evidencia(filas_v1_docente: list[dict], filas_v2_docente: list[dict]) -> str:
     """Instrumento RI2, sección "Fuente primaria" / Ficha F2 sección 5
     (estado_evidencia). Determina si la comparación de este docente entra
-    a la población de avance ("valida"), queda solo como cobertura
-    ("no_valida") o ni siquiera tiene línea base ("sin_referencia_v1").
+    a la población de avance ("valida"), queda como cobertura rechazada
+    ("no_valida"), queda como cobertura sin entrega ("sin_entrega_v2") o
+    ni siquiera tiene línea base ("sin_referencia_v1").
 
     - Sin ninguna fila V1 con status='success' -> "sin_referencia_v1"
       (no hay línea base con la cual comparar -- RF del documento F2:
       "el AA no simula una comparación").
-    - Con V1 válida pero V2 no 'success' (incluida la ausencia total de
-      filas V2) -> "no_valida".
-    - Ambas válidas -> "valida"."""
+    - Con V1 válida y alguna fila V2 con status='success' -> "valida".
+    - Con V1 válida y alguna fila V2 con status='validation_failed' (sin
+      ninguna 'success') -> "no_valida" -- el docente SÍ entregó su
+      Sesión V2, pero el documento no corresponde al producto solicitado.
+    - Con V1 válida y sin ninguna fila V2 'success' ni 'validation_failed'
+      (status='failed', o ausencia total de filas V2) -> "sin_entrega_v2"
+      -- no hay evidencia real que evaluar, se trata como sin entrega
+      (mismo criterio que RI1 usaba para distinguir n_no_validas de
+      n_sin_entrega). Separar estos dos estados importa porque no es lo
+      mismo que un docente haya entregado algo rechazado a que
+      simplemente no haya entregado nada."""
     v1_valida = any(f["status"] == "success" for f in filas_v1_docente)
     if not v1_valida:
         return "sin_referencia_v1"
-    v2_valida = any(f["status"] == "success" for f in filas_v2_docente)
-    return "valida" if v2_valida else "no_valida"
+    if any(f["status"] == "success" for f in filas_v2_docente):
+        return "valida"
+    if any(f["status"] == "validation_failed" for f in filas_v2_docente):
+        return "no_valida"
+    return "sin_entrega_v2"
 
 
 def _cruzar_comparaciones_por_criterio(filas_v1_docente: list[dict], filas_v2_docente: list[dict]) -> list[dict]:
@@ -1388,6 +1400,9 @@ def _construir_advertencia_cobertura_ri2(
 # que se vea generar contra datos reales.
 # =============================================================================
 
+_MANIFESTACION_GENERICA = "resultados que conviene revisar con mayor detalle junto con otras evidencias"
+
+
 def _interpretacion_fallback_ri2(c: dict) -> str:
     return (
         f"{_primera_oracion_interpretacion(c)} Esto se reporta a partir de los datos disponibles. "
@@ -1411,6 +1426,30 @@ def _sintesis_fallback_ri2(variables: dict) -> str:
         "resultados describen cambios observados entre ambas versiones y requieren contrastarse "
         "con otras evidencias institucionales durante la RTC 2."
     )
+
+
+def _quitar_oracion_numerica_inicial(texto: str) -> str:
+    """Quita la primera oración si el LLM repitió cifras ya calculadas.
+
+    Las interpretaciones RI2 reciben desde Python una primera oración con
+    los conteos y porcentajes exactos. Aunque el prompt le pide al modelo
+    que no la repita, se conserva únicamente la continuación cualitativa
+    cuando su primera oración contiene cifras.
+    """
+    texto = re.sub(r"\s+", " ", texto).strip()
+    if not texto:
+        return ""
+
+    # La primera puntuación terminal separa la oración que, en ocasiones,
+    # el modelo repite antes de la explicación solicitada.
+    coincidencia = re.search(r"[.!?](?:\s|$)", texto)
+    if not coincidencia:
+        return texto
+
+    primera_oracion = texto[:coincidencia.end()]
+    if not re.search(r"\d", primera_oracion):
+        return texto
+    return texto[coincidencia.end():].strip()
 
 
 def _secciones_narrativas_fallback_ri2(variables: dict) -> dict:
@@ -1682,6 +1721,11 @@ async def redactar_secciones_narrativas_ri2(variables: dict) -> dict:
         return _completar_huecos_narrativos_ri2(variables, data)
 
 
+def _sin_punto_final(texto: str) -> str:
+    """Evita duplicar el punto que agrega la plantilla al fragmento."""
+    return texto.strip().rstrip(".").rstrip()
+
+
 # =============================================================================
 # RI2 -- orquestador de generación
 # =============================================================================
@@ -1703,6 +1747,7 @@ def _agregar_comparaciones_ie(filas_v1: list[dict], filas_v2: list[dict]) -> dic
     persistentes_por_docente: dict[int, list[str]] = {}
     n_sin_referencia_v1 = 0
     n_no_validas = 0
+    n_sin_entrega_v2 = 0
 
     for user_id in todos_los_user_ids:
         filas_v1_docente = filas_v1_por_docente.get(user_id, [])
@@ -1715,13 +1760,19 @@ def _agregar_comparaciones_ie(filas_v1: list[dict], filas_v2: list[dict]) -> dic
         if estado == "no_valida":
             n_no_validas += 1
             continue
+        if estado == "sin_entrega_v2":
+            n_sin_entrega_v2 += 1
+            continue
 
         # estado == "valida"
         comparacion = _cruzar_comparaciones_por_criterio(filas_v1_docente, filas_v2_docente)
         if not comparacion:
-            # Tiene V1 y V2 válidas pero ningún criterio cruza (caso
-            # límite, ej. datos incompletos por criterio) -- no entra a
-            # la población de avance.
+            # Tiene V1 y V2 válidas (ambas 'success') pero ningún
+            # criterio cruza entre ambas (caso límite, ej. datos
+            # incompletos por criterio) -- no entra a la población de
+            # avance. Se cuenta como n_no_validas, no n_sin_entrega_v2:
+            # sí hubo una entrega válida de V2, el problema es que los
+            # datos no permiten comparar ningún criterio.
             n_no_validas += 1
             continue
 
@@ -1740,6 +1791,7 @@ def _agregar_comparaciones_ie(filas_v1: list[dict], filas_v2: list[dict]) -> dic
         "persistentes_por_docente": persistentes_por_docente,
         "n_sin_referencia_v1": n_sin_referencia_v1,
         "n_no_validas": n_no_validas,
+        "n_sin_entrega_v2": n_sin_entrega_v2,
     }
 
 
@@ -1766,6 +1818,7 @@ async def generar_reporte_ri2(cod_modular: str, nombre_ie: str, ugel: str, regio
     persistentes_por_docente = agregado["persistentes_por_docente"]
     n_sin_referencia_v1 = agregado["n_sin_referencia_v1"]
     n_no_validas = agregado["n_no_validas"]
+    n_sin_entrega_v2 = agregado["n_sin_entrega_v2"]
     filas_v2_por_docente = agrupar_por_docente(filas_v2)
 
     n_comparaciones_validas = len(comparaciones_validas)
@@ -1843,6 +1896,7 @@ async def generar_reporte_ri2(cod_modular: str, nombre_ie: str, ugel: str, regio
         "n_comparaciones_validas": n_comparaciones_validas,
         "n_sin_referencia_v1": n_sin_referencia_v1,
         "n_no_validas": n_no_validas,
+        "n_sin_entrega_v2": n_sin_entrega_v2,
         "pct_cobertura_v2": pct_cobertura_v2,
         "muestra_suficiente": muestra_suficiente,
         "banda_aplicada": clasificacion_cobertura["banda_aplicada"],
